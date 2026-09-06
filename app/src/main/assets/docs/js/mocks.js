@@ -326,6 +326,32 @@ const CAMERA_MOCK = {
   entity_picture: null,
 };
 
+// Fake example Plex library — the plex card talks straight to a Plex server
+// (not an HA entity), so the static editor page has no live data to show at
+// all; these generic titles just make the preview read like a populated row
+// instead of empty placeholder boxes. Real posters/titles load on-device.
+const PLEX_MOCK = {
+  on_deck: [
+    { title: 'Example Movie Night', subtitle: '42 min left' },
+    { title: 'Example Series', subtitle: 'S2E4 · 12 min left' },
+    { title: 'Example Documentary', subtitle: '18 min left' },
+    { title: 'Example Feature', subtitle: '55 min left' },
+  ],
+  recently_added_movies: [
+    { title: 'Example Feature Film', subtitle: '2024' },
+    { title: 'Example Action Movie', subtitle: '2023' },
+    { title: 'Example Comedy', subtitle: '2024' },
+    { title: 'Example Drama', subtitle: '2022' },
+  ],
+  recently_added_shows: [
+    { title: 'Example Series', subtitle: 'S3E1 · Example Episode' },
+    { title: 'Example Show', subtitle: 'S1E6 · Example Episode' },
+    { title: 'Example Sitcom', subtitle: 'S5E12 · Example Episode' },
+    { title: 'Example Drama Series', subtitle: 'S2E3 · Example Episode' },
+  ],
+};
+
+
 // Mirrors MediaPlayerCard.kt's Feature bitmask check (EntityState.supports).
 function mediaSupports(mock, bit) {
   return ((mock.supported_features || 0) & bit) === bit;

@@ -18,10 +18,14 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = "1.1.0"
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-beta"
+        }
         release {
             isMinifyEnabled = false
         }
@@ -63,7 +67,6 @@ ktlint {
     // Matches Android's 4-space/no-wildcard-import conventions instead of
     // ktlint's plain-Kotlin defaults.
     android.set(true)
-    version.set("1.3.1")
     verbose.set(true)
     outputToConsole.set(true)
     reporters {

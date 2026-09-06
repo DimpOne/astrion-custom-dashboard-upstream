@@ -1,7 +1,6 @@
 package com.custom.astrion.cards.impl
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -42,6 +41,7 @@ import com.custom.astrion.cards.CardContext
 import com.custom.astrion.cards.CardRenderer
 import com.custom.astrion.ha.ServiceCall
 import com.custom.astrion.ui.ThemeColors
+import com.custom.astrion.ui.tapClickable
 import kotlin.math.roundToInt
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
@@ -156,7 +156,7 @@ class SpeakerGroupCard : CardRenderer {
                         Modifier
                             .size(26.dp)
                             .clip(CircleShape)
-                            .clickable { toggleGroup() }
+                            .tapClickable { toggleGroup() }
                     )
                 }
                 Text(
@@ -260,7 +260,7 @@ class SpeakerGroupCard : CardRenderer {
                 .size(34.dp)
                 .clip(CircleShape)
                 .background(if (active) theme.danger.copy(alpha = 0.25f) else theme.controlBackground)
-                .clickable(onClick = onClick),
+                .tapClickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
             Icon(

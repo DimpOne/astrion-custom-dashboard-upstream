@@ -2,7 +2,6 @@ package com.custom.astrion.cards.impl
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +17,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,18 +36,22 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.custom.astrion.R
 import com.custom.astrion.ha.EntityState
 import com.custom.astrion.ha.HaClient
 import com.custom.astrion.ha.ServiceCall
 import com.custom.astrion.ui.ThemeColors
 import com.custom.astrion.ui.icons.MdiIcons
+import com.custom.astrion.ui.tapClickable
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.delay
 
 /**
  * Long-press detail popup for [MediaPlayerCard]'s compact tile (mirrors
@@ -82,6 +87,7 @@ fun MediaPlayerDetailDialog(
     val artPath = e?.attrString("entity_picture")
     var art by remember(artPath) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(artPath) { art = artPath?.let { client.fetchBitmap(it) } }
+    var showBrowser by remember { mutableStateOf(false) }
 
     fun mp(service: String, data: Array<out Pair<String, Any?>> = emptyArray()) {
         client.callService(ServiceCall.of("media_player", service, entityId, *data))
@@ -133,6 +139,31 @@ fun MediaPlayerDetailDialog(
                 )
             }
 
+            if (e?.supports(Feature.BROWSE_MEDIA) == true) {
+                Row(
+                    modifier =
+                    Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(theme.controlBackground)
+                        .tapClickable { showBrowser = true }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.List,
+                        contentDescription = null,
+                        tint = theme.primaryText,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        stringResource(R.string.media_browse),
+                        color = theme.primaryText,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(start = 6.dp)
+                    )
+                }
+            }
+
             if (e != null && e.attrDouble("media_duration") != null) {
                 DialogProgressBar(e, theme)
             }
@@ -180,13 +211,17 @@ fun MediaPlayerDetailDialog(
                         .size(44.dp)
                         .clip(CircleShape)
                         .background(if (on) theme.accentSecondary else theme.controlBackground)
-                        .clickable { mp(if (on) "turn_off" else "turn_on") },
+                        .tapClickable { mp(if (on) "turn_off" else "turn_on") },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(MdiIcons.Power, contentDescription = "Toggle", tint = Color.White)
+                    Icon(MdiIcons.Power, contentDescription = stringResource(R.string.media_power_toggle), tint = Color.White)
                 }
             }
         }
+    }
+
+    if (showBrowser) {
+        MediaBrowser(entityId = entityId, client = client, theme = theme) { showBrowser = false }
     }
 }
 
@@ -196,15 +231,24 @@ private fun DialogProgressBar(e: EntityState, theme: ThemeColors) {
     // See MediaPlayerCard.MediaProgressBar's identical comment — Kodi's
     // media_content_id is a nested JsonObject, not a plain string, so this
     // keys on the raw JsonElement's string form instead of attrString().
-    var elapsed by remember(e.entityId, e.attr("media_content_id")?.toString()) {
+    val contentId = e.attr("media_content_id")?.toString()
+    val positionBaseline = e.attrDouble("media_position")
+    val positionUpdatedAt = e.attrString("media_position_updated_at")
+
+    var elapsed by remember(e.entityId, contentId) {
         mutableDoubleStateOf(currentMediaPosition(e))
     }
-    LaunchedEffect(e.entityId, e.state, e.attr("media_content_id")?.toString()) {
-        while (e.state == "playing") {
-            elapsed = currentMediaPosition(e)
-            kotlinx.coroutines.delay(1.seconds)
-        }
+    // Restarts on entity/track/state changes AND whenever the server
+    // reports a fresh position baseline — without positionBaseline/
+    // positionUpdatedAt in the key, a seek mid-track wouldn't restart this
+    // coroutine (state and content_id are unchanged by a seek), so it kept
+    // ticking from its stale captured baseline instead of tracking it.
+    LaunchedEffect(e.entityId, e.state, contentId, positionBaseline, positionUpdatedAt) {
         elapsed = currentMediaPosition(e)
+        while (e.state == "playing") {
+            delay(1.seconds)
+            elapsed = currentMediaPosition(e)
+        }
     }
     val fraction = if (duration > 0) (elapsed / duration).toFloat().coerceIn(0f, 1f) else 0f
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -277,7 +321,7 @@ private fun Circle(icon: ImageVector, size: androidx.compose.ui.unit.Dp, theme: 
             .size(size)
             .clip(CircleShape)
             .background(if (accent) theme.accentSecondary else theme.controlBackground)
-            .clickable(onClick = onClick),
+            .tapClickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, contentDescription = null, tint = Color.White)

@@ -1,5 +1,74 @@
 // ---- Hotkeys --------------------------------------------------------------
 
+// Built-in command suggestions for the HA `androidtv_remote` integration
+// (https://www.home-assistant.io/integrations/androidtv_remote/#remote).
+// Used as a <datalist> when the selected remote entity has no
+// `commands_list` attribute (most Android TV Remote entities don't expose
+// one). Integrations that DO populate `commands_list` (e.g. Apple TV)
+// override this list with their own values at runtime via
+// `remoteCommandSuggestions()`.
+//
+// Order mirrors the HA docs' grouping (Navigation → Volume → Media → TV →
+// Other) so the most-used keys surface first in the dropdown. The older
+// `androidtv` (ADB) integration uses a slightly different keymap (bare
+// `UP`/`DOWN`/`MUTE`/`PLAY`, `HDMI1`-`HDMI4`, `SLEEP`/`WAKEUP`, etc.); those
+// aliases are appended at the end so they still autocomplete for ADB-backed
+// remotes, but the androidtv_remote names take precedence.
+const ANDROID_TV_COMMANDS = [
+  // --- Navigation ---
+  'DPAD_UP', 'DPAD_DOWN', 'DPAD_LEFT', 'DPAD_RIGHT', 'DPAD_CENTER',
+  'BUTTON_A', 'BUTTON_B', 'BUTTON_X', 'BUTTON_Y',
+  'BACK', 'HOME', 'MENU', 'ENTER', 'INFO', 'GUIDE',
+  // --- Volume control ---
+  'VOLUME_UP', 'VOLUME_DOWN', 'VOLUME_MUTE', 'MUTE',
+  // --- Media control ---
+  'MEDIA_PLAY_PAUSE', 'MEDIA_PLAY', 'MEDIA_PAUSE',
+  'MEDIA_NEXT', 'MEDIA_PREVIOUS', 'MEDIA_STOP', 'MEDIA_RECORD',
+  'MEDIA_REWIND', 'MEDIA_FAST_FORWARD',
+  // --- TV control ---
+  'CHANNEL_UP', 'CHANNEL_DOWN',
+  '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+  'DEL',
+  'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12',
+  'TV', 'TV_TELETEXT', 'CAPTIONS', 'DVR',
+  'PROG_RED', 'PROG_GREEN', 'PROG_YELLOW', 'PROG_BLUE',
+  // --- Other ---
+  'BUTTON_MODE', 'EXPLORER', 'SETTINGS', 'SEARCH', 'ASSIST', 'POWER',
+  'MEDIA_AUDIO_TRACK',
+  // --- Legacy `androidtv` (ADB) aliases (not in androidtv_remote docs) ---
+  'UP', 'DOWN', 'LEFT', 'RIGHT', 'CENTER',
+  'ESCAPE', 'END', 'TOP', 'MOVE_HOME', 'PAIRING', 'TEXT',
+  'SLEEP', 'WAKEUP', 'RESUME', 'SUSPEND',
+  'PLAY', 'PAUSE', 'REWIND', 'FAST_FORWARD',
+  'RED', 'GREEN', 'YELLOW', 'BLUE',
+  'INPUT', 'HDMI1', 'HDMI2', 'HDMI3', 'HDMI4',
+  'COMPONENT1', 'COMPONENT2', 'COMPOSITE1', 'COMPOSITE2', 'SAT', 'VGA',
+  'SYSDOWN', 'SYSUP', 'SYSLEFT', 'SYSRIGHT',
+];
+
+// Returns the command list to suggest for a given remote entity, or null
+// when no live HA state is available (HA not configured, or offline). Prefers
+// the entity's own `commands_list` attribute when present; otherwise falls
+// back to the built-in Android TV keymap.
+function remoteCommandSuggestions(entityId) {
+  if (haStates && entityId) {
+    const ent = haStates[entityId];
+    const list = ent && ent.attributes && ent.attributes.commands_list;
+    if (Array.isArray(list) && list.length) return list;
+  }
+  return ANDROID_TV_COMMANDS;
+}
+
+// Build (or rebuild) the <datalist> of command suggestions for #hkCommand
+// based on the currently-entered entity ID. Called on entity input.
+function refreshRemoteCommandDatalist() {
+  const dl = document.getElementById('hkCommandList');
+  if (!dl) return;
+  const entityId = document.getElementById('hkEntityId') ? document.getElementById('hkEntityId').value.trim() : '';
+  const suggestions = remoteCommandSuggestions(entityId) || [];
+  dl.innerHTML = suggestions.map((c) => `<option value="${c}">`).join('');
+}
+
 function updateHotkeyActionInputs() {
   const action = document.getElementById('hkAction').value;
   const container = document.getElementById('dynamicHotkeyInputs');
@@ -24,6 +93,16 @@ function updateHotkeyActionInputs() {
       <label>Entity ID (optional)</label><input type="text" id="hkEntityId" placeholder="e.g., light.living_room">
       <label>Extra data (optional, JSON)</label><input type="text" id="hkData" placeholder='{"brightness": 255}'>
     `;
+  } else if (action === 'remoteCommand') {
+    container.innerHTML = `
+      <label>Remote entity</label><input type="text" id="hkEntityId" placeholder="e.g., remote.family_room" oninput="refreshRemoteCommandDatalist()">
+      <label>Command</label>
+      <input type="text" id="hkCommand" placeholder="e.g., VOLUME_UP" list="hkCommandList">
+      <datalist id="hkCommandList"></datalist>
+      <div class="hint">Pick a <code>remote.*</code> entity. Command suggestions come from the entity's <code>commands_list</code> attribute when present, otherwise from the built-in Android TV keymap.</div>
+    `;
+    attachEntityAutocomplete(document.getElementById('hkEntityId'), 'remote');
+    refreshRemoteCommandDatalist();
   } else if (action === 'harmonyCommand') {
     if (harmonyAvailable) {
       renderHarmonyHubSelect(container, 'command', 'hk');
@@ -46,6 +125,10 @@ function describeHotkey(h) {
   if (h.page) return `→ page "${h.page}"`;
   if (h.openOverlay) return `→ open ${h.openOverlay === 'activities' ? 'Active Activities' : 'Settings'}`;
   if (h.openCurrentActivityRoom) return `→ current Activity in "${h.openCurrentActivityRoom}"`;
+  if (h.service === 'remote.send_command') {
+    const cmd = h.data && h.data.command ? h.data.command : '?';
+    return `→ remote ${h.entityId || '?'} / ${cmd}`;
+  }
   if (h.service) return `→ ${h.service}${h.entityId ? ' (' + h.entityId + ')' : ''}`;
   if (h.harmonyCommand) return `→ Harmony ${h.harmonyDevice || '?'} / ${h.harmonyCommand}`;
   if (h.harmonyActivity) return `→ Harmony activity ${h.harmonyActivity}`;
@@ -129,7 +212,7 @@ async function editHotkey(scope, listType, i) {
   document.getElementById('hkScope').value = scope;
   document.getElementById('hkType').value = listType;
   document.getElementById('hkKey').value = h.key;
-  const action = h.page ? 'page' : h.openOverlay ? 'openOverlay' : h.openCurrentActivityRoom ? 'openCurrentActivity' : h.service ? 'service' : h.harmonyCommand ? 'harmonyCommand' : 'harmonyActivity';
+  const action = h.page ? 'page' : h.openOverlay ? 'openOverlay' : h.openCurrentActivityRoom ? 'openCurrentActivity' : h.service === 'remote.send_command' ? 'remoteCommand' : h.service ? 'service' : h.harmonyCommand ? 'harmonyCommand' : 'harmonyActivity';
   document.getElementById('hkAction').value = action;
   updateHotkeyActionInputs();
 
@@ -143,6 +226,10 @@ async function editHotkey(scope, listType, i) {
     document.getElementById('hkService').value = h.service || '';
     document.getElementById('hkEntityId').value = h.entityId || '';
     document.getElementById('hkData').value = h.data ? JSON.stringify(h.data) : '';
+  } else if (action === 'remoteCommand') {
+    document.getElementById('hkEntityId').value = h.entityId || '';
+    document.getElementById('hkCommand').value = (h.data && h.data.command) || '';
+    refreshRemoteCommandDatalist();
   } else if (action === 'harmonyCommand') {
     if (harmonyAvailable) {
       const hubId = h.hub || (harmonyHubsList[0] && harmonyHubsList[0].localId) || '';
@@ -208,6 +295,13 @@ function addHotkey() {
     if (rawData) {
       try { hkObj.data = JSON.parse(rawData); } catch (e) { alert('Extra data must be valid JSON'); return; }
     }
+  } else if (action === 'remoteCommand') {
+    const entityId = document.getElementById('hkEntityId').value.trim();
+    const command = document.getElementById('hkCommand').value.trim();
+    if (!entityId || !command) { alert('Pick a remote entity and a command.'); return; }
+    hkObj.service = 'remote.send_command';
+    hkObj.entityId = entityId;
+    hkObj.data = { command };
   } else if (action === 'harmonyCommand') {
     if (harmonyAvailable) {
       const hub = document.getElementById('hkHub').value.trim();
@@ -244,4 +338,125 @@ function addHotkey() {
   target[hkType].push(hkObj);
 
   renderHotkeysList(); renderPreview(); updateJsonOutput();
+}
+
+// ---- Release badges (official + beta) --------------------------------------
+
+const RELEASE_STRINGS = {
+  en: {
+    loading: 'Loading…',
+    stableUnavailable: 'Official release unavailable',
+    betaUnavailable: 'Beta unavailable',
+    downloadApk: 'download the APK',
+    installToDevice: 'Install on this device',
+    installing: 'Installing…',
+    installStarted: 'Install launched on the remote.',
+    installFailed: 'Install failed: ',
+    alsoBeta: 'Also the beta (dev)'
+  },
+  fr: {
+    loading: 'Chargement…',
+    stableUnavailable: 'Version officielle indisponible',
+    betaUnavailable: 'Bêta indisponible',
+    downloadApk: "télécharger l'APK",
+    installToDevice: 'Installer sur cet appareil',
+    installing: 'Installation…',
+    installStarted: 'Installation lancée sur la télécommande.',
+    installFailed: "Échec de l'installation : ",
+    alsoBeta: 'Aussi la bêta (dev)'
+  }
+};
+
+const HW_KEY_TITLES = {
+  en: {
+    BACK: 'Back', HOME: 'Home', POWER: 'Power', VOLUME_UP: 'Volume +',
+    PAGE_UP: 'Previous page', VOLUME_DOWN: 'Volume -', PAGE_DOWN: 'Next page',
+    MUTE: 'Mute', VOICE: 'Microphone', MAIN: 'Menu', REWIND: 'Rewind',
+    PLAY: 'Play / Pause', STOP: 'Stop', FASTFORWARD: 'Fast-forward'
+  },
+  fr: {
+    BACK: 'Retour', HOME: 'Accueil', POWER: 'Alimentation', VOLUME_UP: 'Volume +',
+    PAGE_UP: 'Page précédente', VOLUME_DOWN: 'Volume -', PAGE_DOWN: 'Page suivante',
+    MUTE: 'Muet', VOICE: 'Microphone', MAIN: 'Menu', REWIND: 'Retour rapide',
+    PLAY: 'Lecture / Pause', STOP: 'Arrêt', FASTFORWARD: 'Avance rapide'
+  }
+};
+
+const uiLang = ((navigator.language || 'en').split('-')[0]).startsWith('fr') ? 'fr' : 'en';
+const t = (key) => RELEASE_STRINGS[uiLang][key];
+
+function applyUiI18n() {
+  const betaLabel = document.getElementById('betaToggleLabel');
+  if (betaLabel) betaLabel.textContent = t('alsoBeta');
+  document.querySelectorAll('button[data-hwkey]').forEach(btn => {
+    const title = HW_KEY_TITLES[uiLang][btn.dataset.hwkey];
+    if (title) btn.title = title;
+  });
+}
+
+async function fetchReleaseBadge(url, icon) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const asset = (data.assets || []).find(a => a.name.endsWith('.apk'));
+    return `${icon} ${data.name || data.tag_name}` +
+      (asset ? ` — <a href="${asset.browser_download_url}">${t('downloadApk')}</a>` : '');
+  } catch (e) {
+    console.log('Release fetch failed', e);
+    return null;
+  }
+}
+
+async function loadStableBadge() {
+  const badge = document.getElementById('stableBadge');
+  if (!badge) return;
+  badge.textContent = t('loading');
+  const html = await fetchReleaseBadge(
+    'https://api.github.com/repos/dckiller51/astrion-custom-dashboard/releases/latest', '✅'
+  );
+  badge.innerHTML = html || t('stableUnavailable');
+}
+
+async function toggleBetaBadge() {
+  const on = document.getElementById('betaToggle').checked;
+  const badge = document.getElementById('betaBadge');
+  if (!on) { badge.style.display = 'none'; return; }
+  badge.textContent = t('loading');
+  badge.style.display = 'inline-block';
+  const html = await fetchReleaseBadge(
+    'https://api.github.com/repos/dckiller51/astrion-custom-dashboard/releases/tags/dev-latest', '🧪'
+  );
+  if (!html) {
+    badge.innerHTML = t('betaUnavailable');
+    return;
+  }
+  // A real one-click install button posts to /install-beta-update —
+  // same-origin, so it runs server-side on the remote regardless of which
+  // browser/device clicked it, exactly like the existing official-update
+  // button. Only shown once dashboard.json has actually finished loading
+  // (deviceModeAvailable); until then the plain download link from
+  // fetchReleaseBadge stays as the fallback.
+  if (typeof deviceModeAvailable !== 'undefined' && deviceModeAvailable) {
+    const label = html.replace(/ — <a[^>]*>.*?<\/a>/, '');
+    badge.innerHTML = `${label} — <button type="button" onclick="installBetaUpdate(this)" style="padding:4px 10px;font-size:0.8rem">${t('installToDevice')}</button>`;
+  } else {
+    badge.innerHTML = html;
+  }
+}
+
+async function installBetaUpdate(btn) {
+  const original = btn.textContent;
+  btn.textContent = t('installing');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/install-beta-update', { method: 'POST' });
+    const text = await res.text();
+    if (!res.ok) throw new Error(text || ('HTTP ' + res.status));
+    showToast(t('installStarted'));
+  } catch (e) {
+    showToast(t('installFailed') + e.message, 'error');
+    btn.textContent = original;
+    btn.disabled = false;
+  }
 }

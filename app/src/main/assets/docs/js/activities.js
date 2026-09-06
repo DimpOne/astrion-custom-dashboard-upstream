@@ -32,11 +32,31 @@ function irDevicesById() {
   return Object.fromEntries((dashboardData.irDevices || []).map(d => [d.id, d]));
 }
 
+/**
+ * [value, label] entries for an IR device's command fields. Only *actually*
+ * known for inline devices (commands map right there in dashboardData). For
+ * an ir-database reference device, falls back to whatever "known command
+ * ids" were typed in when it was created on the Devices page (see
+ * dev.commandHints, set by devices-page.js's saveIrDevice()) — no friendly
+ * label available for those, just the id twice. Empty either way if
+ * there's nothing to suggest. Only feeds a real `<select>` for a device
+ * whose list is actually complete (inline IR, or Harmony) — see
+ * hasCompleteCommandList(); a reference device's hints are always partial,
+ * so those fields stay free-text with datalist suggestions instead.
+ */
+function irDeviceCommandEntries(dev) {
+  if (!dev) return [];
+  if (dev.commands) return Object.entries(dev.commands).map(([id, c]) => [id, `${id} — ${c.label || id}`]);
+  const hints = dev.commandHints || [];
+  return hints.map(id => [id, id]);
+}
+
 function deviceRefLabel(ref) {
   if (ref.source === 'ir') return `${irDevicesById()[ref.deviceId]?.name || ref.deviceId} (IR)`;
   if (ref.source === 'harmony') return `${ref.deviceLabel || ref.deviceId} (Harmony)`;
   return `${ref.deviceId} (HA)`;
 }
+
 
 const WIZARD_STEP_LABELS = {
   type: 'What kind of Activity?',
@@ -59,7 +79,6 @@ function startActivityWizard(editId) {
     name: existing?.name || '',
     room: existing?.room || '',
     icon: existing?.icon || '',
-    page: existing?.page || '',
     // deviceRefs: [{source, deviceId, hub?, deviceLabel?}] — selection only, no commands yet
     deviceRefs: existing ? existing.devices.map(d => ({ source: d.source, deviceId: d.deviceId, hub: d.hub })) : [],
     // deviceConfig[i] matches deviceRefs[i]: {powerOnCommand, powerOffCommand, inputCommand, powerOnFirst, powerOffOnExit, delayAfterMs}
@@ -92,7 +111,7 @@ function volumeDeviceRef() {
 
 // Volume commands only make sense for ir/harmony (named commands to pick
 // from); an "ha" volume device always uses the fixed media_player.volume_up/
-// volume_down/volume_mute services (see applyVolumeHotkeysToPage), so that
+// volume_down/volume_mute services (see writeVolumeHotkeysForActivity), so that
 // phase is skipped entirely for it.
 function needsVolumeCommandsPhase() {
   const ref = volumeDeviceRef();
@@ -105,7 +124,6 @@ function wizardNext() {
     wizard.name = document.getElementById('wizName').value.trim();
     wizard.room = document.getElementById('wizRoom').value.trim();
     wizard.icon = document.getElementById('wizIcon').value.trim();
-    wizard.page = document.getElementById('wizPage').value.trim();
     if (!wizard.name) { alert('Give this Activity a name.'); return; }
     if (!wizard.room) { alert('An Activity needs a room — that\'s what makes it exclusive at runtime.'); return; }
     wizard.phase = 'devices';
@@ -214,8 +232,7 @@ function renderWizardInfo() {
     <label>Room</label>
     <input type="text" id="wizRoom" value="${wizard.room}" placeholder="e.g., Living Room">
     <div id="wizIconField"></div>
-    <label>Page to open when this Activity starts (optional)</label>
-    <input type="text" id="wizPage" value="${wizard.page}" placeholder="e.g., Apple TV">
+    <div class="hint">Which page this Activity opens (and its volume keys, if any) is set where you place it on a scene card — not here, since an Activity is only ever triggered from one.</div>
   `;
 }
 
@@ -226,7 +243,7 @@ function renderWizardDevices() {
     <div class="hint">Which devices does this Activity involve? You'll pick an input/command for each on the next screens.</div>
 
     <h3>Local IR devices</h3>
-    ${irDevices.length === 0 ? '<div class="hint">No IR devices yet — create one in the "IR Devices" section, then reopen this wizard.</div>' :
+    ${irDevices.length === 0 ? '<div class="hint">No IR devices yet — add one from this device\'s home page, then reopen this wizard.</div>' :
       irDevices.map(d => `
         <label class="inline-check">
           <input type="checkbox" ${selectedIrIds.has(d.id) ? 'checked' : ''} onchange="toggleIrDeviceRef('${d.id}', this.checked)">
@@ -248,6 +265,44 @@ function renderWizardDevices() {
   `;
 }
 
+/** True when we actually know the *complete* command set for this device —
+ * Harmony (live from the hub) or an inline IR device (commands stored right
+ * there in dashboard.json) — vs. only ever having partial hints (an
+ * ir-database *reference* device, whose real command list lives on the
+ * phone's sdcard, unknown to this builder). Complete -> a strict <select>,
+ * like everywhere else in this builder. Partial -> keep it a free-text
+ * input with <datalist> suggestions, so an id this builder doesn't know
+ * about doesn't leave the field with nothing pickable. */
+function hasCompleteCommandList(ref) {
+  if (ref.source === 'harmony') return true;
+  if (ref.source === 'ir') return !!(irDevicesById()[ref.deviceId]?.commands);
+  return false;
+}
+
+function commandFieldHtml(fieldId, label, ref) {
+  if (hasCompleteCommandList(ref)) {
+    return `<label>${label}</label><select id="${fieldId}"><option value="">— none —</option></select>`;
+  }
+  return `<label>${label}</label><input type="text" id="${fieldId}" list="${fieldId}Hints"><datalist id="${fieldId}Hints"></datalist>`;
+}
+
+/** Fills fieldId with `entries` ([id, label] pairs) and sets `currentValue`
+ * — as real <option>s for a complete list (see hasCompleteCommandList), or
+ * as <datalist> suggestions alongside a free-text value otherwise. */
+function fillCommandField(fieldId, entries, currentValue, ref) {
+  if (hasCompleteCommandList(ref)) {
+    const sel = document.getElementById(fieldId);
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— none —</option>' +
+      entries.map(([id, label]) => `<option value="${id}">${label}</option>`).join('');
+    sel.value = currentValue || '';
+  } else {
+    fillWizCommandOptions(fieldId, entries);
+    const el = document.getElementById(fieldId);
+    if (el) el.value = currentValue || '';
+  }
+}
+
 function renderWizardConfigure() {
   const ref = wizard.deviceRefs[wizard.configureIndex];
   const cfg = wizard.deviceConfig[wizard.configureIndex] || {};
@@ -260,12 +315,9 @@ function renderWizardConfigure() {
       <label>Source (optional, passed to media_player.select_source)</label>
       <input type="text" id="wizInputText" value="${cfg.inputCommand || ''}" placeholder="e.g. Apple TV">
     ` : `
-      <label>Power-on command (optional)</label>
-      <select id="wizPowerOn"><option value="">— none —</option></select>
-      <label>Power-off command (optional)</label>
-      <select id="wizPowerOff"><option value="">— none —</option></select>
-      <label>Input/source command (optional — sent after power-on, or on its own if this device is shared with the outgoing Activity)</label>
-      <select id="wizInput"><option value="">— none —</option></select>
+      ${commandFieldHtml('wizPowerOn', 'Power-on command (optional)', ref)}
+      ${commandFieldHtml('wizPowerOff', 'Power-off command (optional)', ref)}
+      ${commandFieldHtml('wizInput', 'Input/source command (optional — sent after power-on, or on its own if this device is shared with the outgoing Activity)', ref)}
     `}
 
     <label class="inline-check" style="margin-top:10px"><input type="checkbox" id="wizPowerOnFirst" ${cfg.powerOnFirst !== false ? 'checked' : ''}> Power on when this Activity starts (uncheck for an always-on device)</label>
@@ -282,7 +334,7 @@ function renderWizardVolume() {
       <option value="">— none —</option>
       ${wizard.deviceRefs.map(r => `<option value="${r.deviceId}" ${wizard.volumeDeviceId === r.deviceId ? 'selected' : ''}>${deviceRefLabel(r)}</option>`).join('')}
     </select>
-    <div class="hint" style="margin-top:8px">If this Activity has a "Page", these get written as page-scoped hotkeys on it (overriding whatever VOLUME_UP/DOWN/MUTE do elsewhere) once saved.</div>
+    <div class="hint" style="margin-top:8px">Bound to physical volume keys wherever you place this Activity on a scene card, once saved.</div>
   `;
 }
 
@@ -290,12 +342,9 @@ function renderWizardVolumeCommands() {
   const ref = volumeDeviceRef();
   return `
     <div class="hint">Which commands on <strong>${deviceRefLabel(ref)}</strong> are volume up, volume down, and mute?</div>
-    <label>Volume up</label>
-    <select id="wizVolUp"><option value="">— none —</option></select>
-    <label>Volume down</label>
-    <select id="wizVolDown"><option value="">— none —</option></select>
-    <label>Mute</label>
-    <select id="wizMute"><option value="">— none —</option></select>
+    ${commandFieldHtml('wizVolUp', 'Volume up', ref)}
+    ${commandFieldHtml('wizVolDown', 'Volume down', ref)}
+    ${commandFieldHtml('wizMute', 'Mute', ref)}
   `;
 }
 
@@ -310,10 +359,10 @@ function renderWizardReview() {
     volLine = volRef.source === 'ha'
       ? `Volume: ${deviceRefLabel(volRef)} (via media_player.volume_up/volume_down/volume_mute)`
       : `Volume: ${deviceRefLabel(volRef)} — up: ${wizard.volumeUpCommand || '—'}, down: ${wizard.volumeDownCommand || '—'}, mute: ${wizard.muteCommand || '—'}`;
-    if (!wizard.page) volLine += ' — no "page" set on this Activity, so these won\'t be written anywhere as hotkeys yet.';
+    volLine += ' — bound to the physical volume keys wherever you place this Activity on a scene card.';
   }
   return `
-    <div class="hint"><strong>${wizard.name}</strong> — ${wizard.room}${wizard.page ? ' — opens "' + wizard.page + '"' : ''}</div>
+    <div class="hint"><strong>${wizard.name}</strong> — ${wizard.room}</div>
     <div id="wizReviewList" style="margin-top:10px"></div>
     ${volLine ? `<div class="hint" style="margin-top:8px">${volLine}</div>` : ''}
     ${noCmdCount > 0 ? `<div class="hint" style="color:#e5984a;margin-top:8px">${noCmdCount} device${noCmdCount === 1 ? '' : 's'} have no commands set — they won't do anything when this Activity runs.</div>` : ''}
@@ -334,47 +383,35 @@ function wireWizardPhase(phase) {
     const ref = wizard.deviceRefs[wizard.configureIndex];
     const cfg = wizard.deviceConfig[wizard.configureIndex] || {};
     if (ref.source === 'ir') {
-      const dev = irDevicesById()[ref.deviceId];
-      const entries = dev ? Object.entries(dev.commands).map(([id, c]) => [id, `${id} — ${c.label || id}`]) : [];
-      fillWizCommandOptions('wizPowerOn', entries);
-      fillWizCommandOptions('wizPowerOff', entries);
-      fillWizCommandOptions('wizInput', entries);
-      document.getElementById('wizPowerOn').value = cfg.powerOnCommand || '';
-      document.getElementById('wizPowerOff').value = cfg.powerOffCommand || '';
-      document.getElementById('wizInput').value = cfg.inputCommand || '';
+      const entries = irDeviceCommandEntries(irDevicesById()[ref.deviceId]);
+      fillCommandField('wizPowerOn', entries, cfg.powerOnCommand, ref);
+      fillCommandField('wizPowerOff', entries, cfg.powerOffCommand, ref);
+      fillCommandField('wizInput', entries, cfg.inputCommand, ref);
     } else if (ref.source === 'harmony') {
       loadHarmonyConfig(ref.hub).then(data => {
         const device = (data.devices || []).find(d => d.id === ref.deviceId);
-        const entries = device ? device.commands.map(c => [c.name, c.label || c.name]) : [];
-        fillWizCommandOptions('wizPowerOn', entries);
-        fillWizCommandOptions('wizPowerOff', entries);
-        fillWizCommandOptions('wizInput', entries);
-        document.getElementById('wizPowerOn').value = cfg.powerOnCommand || '';
-        document.getElementById('wizPowerOff').value = cfg.powerOffCommand || '';
-        document.getElementById('wizInput').value = cfg.inputCommand || '';
+        const aliases = dashboardData.harmonyAliases?.[ref.hub]?.[ref.deviceId] || {};
+        const entries = device ? device.commands.map(c => [c.name, aliases[c.name] || c.label || c.name]) : [];
+        fillCommandField('wizPowerOn', entries, cfg.powerOnCommand, ref);
+        fillCommandField('wizPowerOff', entries, cfg.powerOffCommand, ref);
+        fillCommandField('wizInput', entries, cfg.inputCommand, ref);
       });
     }
   } else if (phase === 'volumeCommands') {
     const ref = volumeDeviceRef();
     if (ref.source === 'ir') {
-      const dev = irDevicesById()[ref.deviceId];
-      const entries = dev ? Object.entries(dev.commands).map(([id, c]) => [id, `${id} — ${c.label || id}`]) : [];
-      fillWizCommandOptions('wizVolUp', entries);
-      fillWizCommandOptions('wizVolDown', entries);
-      fillWizCommandOptions('wizMute', entries);
-      document.getElementById('wizVolUp').value = wizard.volumeUpCommand || '';
-      document.getElementById('wizVolDown').value = wizard.volumeDownCommand || '';
-      document.getElementById('wizMute').value = wizard.muteCommand || '';
+      const entries = irDeviceCommandEntries(irDevicesById()[ref.deviceId]);
+      fillCommandField('wizVolUp', entries, wizard.volumeUpCommand, ref);
+      fillCommandField('wizVolDown', entries, wizard.volumeDownCommand, ref);
+      fillCommandField('wizMute', entries, wizard.muteCommand, ref);
     } else if (ref.source === 'harmony') {
       loadHarmonyConfig(ref.hub).then(data => {
         const device = (data.devices || []).find(d => d.id === ref.deviceId);
-        const entries = device ? device.commands.map(c => [c.name, c.label || c.name]) : [];
-        fillWizCommandOptions('wizVolUp', entries);
-        fillWizCommandOptions('wizVolDown', entries);
-        fillWizCommandOptions('wizMute', entries);
-        document.getElementById('wizVolUp').value = wizard.volumeUpCommand || '';
-        document.getElementById('wizVolDown').value = wizard.volumeDownCommand || '';
-        document.getElementById('wizMute').value = wizard.muteCommand || '';
+        const aliases = dashboardData.harmonyAliases?.[ref.hub]?.[ref.deviceId] || {};
+        const entries = device ? device.commands.map(c => [c.name, aliases[c.name] || c.label || c.name]) : [];
+        fillCommandField('wizVolUp', entries, wizard.volumeUpCommand, ref);
+        fillCommandField('wizVolDown', entries, wizard.volumeDownCommand, ref);
+        fillCommandField('wizMute', entries, wizard.muteCommand, ref);
       });
     }
   } else if (phase === 'review') {
@@ -382,11 +419,18 @@ function wireWizardPhase(phase) {
   }
 }
 
-function fillWizCommandOptions(selectId, commandEntries) {
-  const sel = document.getElementById(selectId);
-  if (!sel) return;
-  sel.innerHTML = '<option value="">— none —</option>' +
-    commandEntries.map(([id, label]) => `<option value="${id}">${label}</option>`).join('');
+/**
+ * Populates the `<datalist>` suggestions for a command field that's a
+ * free-text input — only reached via [fillCommandField] for a device whose
+ * command list is genuinely partial (an ir-database *reference* device with
+ * typed-in "known command ids" hints; see [hasCompleteCommandList]).
+ * Harmony and inline-IR devices get a real `<select>` instead, filled
+ * directly in [fillCommandField].
+ */
+function fillWizCommandOptions(inputId, commandEntries) {
+  const datalist = document.getElementById(inputId + 'Hints');
+  if (!datalist) return;
+  datalist.innerHTML = commandEntries.map(([id, label]) => `<option value="${id}">${label}</option>`).join('');
 }
 
 function renderWizardHarmonyAddFields() {
@@ -517,7 +561,6 @@ function saveActivityWizard() {
     name: wizard.name,
     room: wizard.room,
     ...(wizard.icon ? { icon: wizard.icon } : {}),
-    ...(wizard.page ? { page: wizard.page } : {}),
     devices,
     ...(wizard.volumeDeviceId ? { volumeDeviceId: wizard.volumeDeviceId } : {}),
     ...(volRef && volRef.source !== 'ha' && wizard.volumeUpCommand ? { volumeUpCommand: wizard.volumeUpCommand } : {}),
@@ -535,7 +578,11 @@ function saveActivityWizard() {
     while (dashboardData.activities.some(a => a.id === uniqueId)) uniqueId = `${id}_${n++}`;
     dashboardData.activities.push({ id: uniqueId, ...payload });
   }
-  applyVolumeHotkeysToPage();
+  // Volume hotkeys (if this Activity has a volume device) get bound to a
+  // page wherever this Activity is actually placed on a scene card — see
+  // writeVolumeHotkeysForActivity() in cards.js's addGridItem() — not here:
+  // an Activity on its own isn't tied to any page, it's only ever reached
+  // via a card, so that's the one place the page is actually unambiguous.
   closeActivityWizard();
   renderActivitiesList();
   updateCardFormInputs(); // refreshes the composed-Activity picker inside the scene_grid form, if open
@@ -556,15 +603,33 @@ function saveActivityWizard() {
  * globally to a different default device, and page-scoped hotkeys silently
  * taking priority there would be a surprise otherwise.
  */
-function applyVolumeHotkeysToPage() {
-  if (!wizard.page || !wizard.volumeDeviceId) return;
-  const ref = volumeDeviceRef();
+/**
+ * Writes VOLUME_UP/VOLUME_DOWN/MUTE as page-scoped hotkeys (PageConfig.
+ * hotkeys, which already override global bindings while that page is on
+ * screen — see MainActivity.mergeHotkeys) on `pageName`, so pressing the
+ * physical volume keys while that page is showing routes to whichever
+ * device `activity` designated for volume. No-op if the Activity has no
+ * volume device chosen, or `pageName` doesn't resolve to an actual page.
+ *
+ * Called from cards.js's addGridItem() whenever a composed Activity
+ * (dashboardData.activities) is placed on a scene_grid card — the page that
+ * card lives on is the one unambiguous place this binding makes sense; an
+ * Activity by itself isn't tied to any page; it's only ever reached via a
+ * card. See addGridItem's own call site for why this can't run at Activity
+ * save time instead: the Activity may not be on any card yet.
+ *
+ * If that page already has ANY of these three keys bound to something else,
+ * confirms before overwriting — the most likely case is the user already
+ * assigned VOLUME_UP/DOWN/MUTE globally to a different default device, and
+ * page-scoped hotkeys silently taking priority there would be a surprise
+ * otherwise.
+ */
+function writeVolumeHotkeysForActivity(activity, pageName) {
+  if (!activity || !activity.volumeDeviceId || !pageName) return;
+  const ref = (activity.devices || []).find(d => d.deviceId === activity.volumeDeviceId);
   if (!ref) return;
-  const page = dashboardData.pages.find(p => p.name === wizard.page);
-  if (!page) {
-    alert(`Heads up: this Activity's page "${wizard.page}" doesn't exist yet, so volume hotkeys weren't written anywhere. Create the page, then reopen and re-save this Activity.`);
-    return;
-  }
+  const page = dashboardData.pages.find(p => p.name === pageName);
+  if (!page) return; // the card being saved always lives on an existing page already
 
   let bindings;
   if (ref.source === 'ha') {
@@ -578,9 +643,9 @@ function applyVolumeHotkeysToPage() {
       ? { irDevice: ref.deviceId, irCommand: command }
       : { harmonyDevice: ref.deviceId, harmonyCommand: command, ...(ref.hub ? { hub: ref.hub } : {}) };
     bindings = [];
-    if (wizard.volumeUpCommand) bindings.push({ key: 'VOLUME_UP', ...actionFor(wizard.volumeUpCommand) });
-    if (wizard.volumeDownCommand) bindings.push({ key: 'VOLUME_DOWN', ...actionFor(wizard.volumeDownCommand) });
-    if (wizard.muteCommand) bindings.push({ key: 'MUTE', ...actionFor(wizard.muteCommand) });
+    if (activity.volumeUpCommand) bindings.push({ key: 'VOLUME_UP', ...actionFor(activity.volumeUpCommand) });
+    if (activity.volumeDownCommand) bindings.push({ key: 'VOLUME_DOWN', ...actionFor(activity.volumeDownCommand) });
+    if (activity.muteCommand) bindings.push({ key: 'MUTE', ...actionFor(activity.muteCommand) });
   }
   if (!bindings.length) return;
 
@@ -590,8 +655,8 @@ function applyVolumeHotkeysToPage() {
     .filter(key => page.hotkeys.some(h => h.key === key));
   if (conflictingKeys.length) {
     const proceed = confirm(
-      `Page "${wizard.page}" already has a hotkey for ${conflictingKeys.join('/')}. ` +
-      `Overwrite with this Activity's volume device (${deviceRefLabel(ref)})?`,
+      `Page "${pageName}" already has a hotkey for ${conflictingKeys.join('/')}. ` +
+      `Overwrite with "${activity.name}"'s volume device (${deviceRefLabel(ref)})?`,
     );
     if (!proceed) return;
   }

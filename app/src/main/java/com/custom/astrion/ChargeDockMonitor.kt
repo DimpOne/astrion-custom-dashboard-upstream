@@ -1,0 +1,139 @@
+package com.custom.astrion
+
+import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import android.view.WindowManager
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+
+/**
+ * Detects whether [activity] is sitting on its charging dock — as opposed
+ * to just being plugged into a computer over USB for development, which
+ * reports charging identically (both read as generic "AC" via
+ * [BatteryManager], confirmed on real hardware; the dock's two charging
+ * pins carry power only, bypassing the USB data lines entirely). What
+ * *does* differ: whether a USB *data* connection is present at all — a
+ * real cable enumerates, the dock's power-only pins never do. So: charging
+ * AND no USB data connection = genuinely docked.
+ *
+ * While docked, also owns the charging screen's auto-dim timer: window
+ * brightness down to near-zero after [DIM_DELAY_MS] of no touches (see
+ * [onUserInteraction], meant to be called from the Activity's own
+ * override of the same name — the standard Android hook for "the user is
+ * still there" regardless of which view or Compose node actually
+ * consumed the touch), back up immediately on the next one.
+ *
+ * Extracted out of MainActivity — which was starting to accumulate a lot
+ * of unrelated concerns in one place — so this one feature's state,
+ * receiver, and timer live somewhere they can be read start to finish.
+ */
+class ChargeDockMonitor(private val activity: Activity) {
+
+    data class State(val isCharging: Boolean, val isDocked: Boolean)
+
+    var state by mutableStateOf(State(isCharging = false, isDocked = false))
+        private set
+    var dimmed by mutableStateOf(false)
+        private set
+
+    private val handler = Handler(Looper.getMainLooper())
+    private val dimRunnable = Runnable { applyDimmed(true) }
+
+    private val receiver =
+        object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) = refresh()
+        }
+
+    /** Call from Activity.onCreate(). */
+    fun start() {
+        activity.registerReceiver(
+            receiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_POWER_CONNECTED)
+                addAction(Intent.ACTION_POWER_DISCONNECTED)
+                addAction(ACTION_USB_STATE)
+            }
+        )
+        refresh()
+        Log.i(TAG, "start — initial state=$state")
+    }
+
+    /** Call from Activity.onDestroy(). */
+    fun stop() {
+        runCatching { activity.unregisterReceiver(receiver) }
+        handler.removeCallbacks(dimRunnable)
+    }
+
+    /** Call from Activity.onUserInteraction(). */
+    fun onUserInteraction() {
+        if (state.isDocked) armDimTimer()
+    }
+
+    /** Reads the current charge/USB state fresh via sticky broadcasts —
+     * called once up front and again on every power-connected/-disconnected
+     * or USB-state transition, rather than tracked incrementally, so it
+     * can't drift out of sync with reality. */
+    private fun refresh() {
+        val batteryStatus =
+            activity.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                ?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val isCharging =
+            batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING ||
+                batteryStatus == BatteryManager.BATTERY_STATUS_FULL
+
+        val usbConnected =
+            activity.registerReceiver(null, IntentFilter(ACTION_USB_STATE))
+                ?.getBooleanExtra(EXTRA_USB_CONNECTED, false) ?: false
+
+        val newState = State(isCharging, isDocked = isCharging && !usbConnected)
+        if (newState == state) return
+        Log.i(TAG, "state -> $newState (usbConnected=$usbConnected)")
+        state = newState
+
+        if (newState.isDocked) armDimTimer() else clearDimTimer()
+    }
+
+    private fun armDimTimer() {
+        handler.removeCallbacks(dimRunnable)
+        applyDimmed(false)
+        handler.postDelayed(dimRunnable, DIM_DELAY_MS)
+    }
+
+    private fun clearDimTimer() {
+        handler.removeCallbacks(dimRunnable)
+        applyDimmed(false)
+    }
+
+    private fun applyDimmed(dim: Boolean) {
+        if (dimmed == dim) return
+        dimmed = dim
+        val brightness = if (dim) DIMMED_BRIGHTNESS else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        runCatching {
+            activity.window.attributes = activity.window.attributes.apply { screenBrightness = brightness }
+        }.onFailure { Log.i(TAG, "set brightness ($dim) failed", it) }
+    }
+
+    private companion object {
+        const val TAG = "ChargeDock"
+        const val DIM_DELAY_MS = 15_000L
+        const val DIMMED_BRIGHTNESS = 0.01f
+
+        // Real, sticky-broadcast constants (confirmed present in AOSP source
+        // and at runtime) but *not* part of the public UsbManager SDK stub —
+        // UsbManager.ACTION_USB_STATE/USB_CONNECTED don't resolve at compile
+        // time despite existing on-device, hence the raw string literals:
+        // IntentFilter.addAction(String) and Intent.getBooleanExtra(String,
+        // Boolean) are both fully public APIs, this is just the value they're
+        // given, not a reflection-based reach into a hidden class member.
+        const val ACTION_USB_STATE = "android.hardware.usb.action.USB_STATE"
+        const val EXTRA_USB_CONNECTED = "connected"
+    }
+}

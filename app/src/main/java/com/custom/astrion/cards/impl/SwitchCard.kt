@@ -1,7 +1,6 @@
 package com.custom.astrion.cards.impl
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -32,6 +31,7 @@ import com.custom.astrion.R
 import com.custom.astrion.cards.CardConfig
 import com.custom.astrion.cards.CardContext
 import com.custom.astrion.cards.CardRenderer
+import com.custom.astrion.ui.tapClickable
 
 /**
  * Switch tile: simple toggle. Works for switch.* (and anything toggleable).
@@ -57,7 +57,7 @@ class SwitchCard : CardRenderer {
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(18.dp))
                 .background(if (on) onColor else ctx.theme.controlBackground)
-                .clickable { ctx.client.toggle(entityId) }
+                .tapClickable { ctx.client.toggle(entityId) }
                 .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {

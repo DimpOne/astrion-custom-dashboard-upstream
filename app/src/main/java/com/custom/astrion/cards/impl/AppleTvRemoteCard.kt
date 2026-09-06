@@ -1,7 +1,6 @@
 package com.custom.astrion.cards.impl
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +37,7 @@ import com.custom.astrion.cards.CardConfig
 import com.custom.astrion.cards.CardContext
 import com.custom.astrion.cards.CardRenderer
 import com.custom.astrion.ui.ThemeColors
+import com.custom.astrion.ui.tapClickable
 
 /**
  * Apple TV remote styled like a Siri Remote.
@@ -96,7 +96,7 @@ class AppleTvRemoteCard : CardRenderer {
                     .size(56.dp)
                     .clip(CircleShape)
                     .background(ctx.theme.controlBackground)
-                    .clickable {
+                    .tapClickable {
                         send(if (isPlaying) "Pause" else "Play")
                         isPlaying = !isPlaying
                     },
@@ -126,7 +126,7 @@ class AppleTvRemoteCard : CardRenderer {
                 .size(220.dp)
                 .clip(CircleShape)
                 .background(theme.controlBackground)
-                .clickable(onClick = onSelect),
+                .tapClickable(onClick = onSelect),
             contentAlignment = Alignment.Center
         ) {
             EdgeIcon(Icons.Filled.KeyboardArrowUp, Alignment.TopCenter, onUp, theme)
@@ -157,7 +157,7 @@ class AppleTvRemoteCard : CardRenderer {
                 Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .clickable(onClick = onClick),
+                    .tapClickable(onClick = onClick),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(icon, contentDescription = null, tint = theme.mutedText)
@@ -172,7 +172,7 @@ class AppleTvRemoteCard : CardRenderer {
             Modifier
                 .clip(RoundedCornerShape(50))
                 .background(theme.controlBackground)
-                .clickable(onClick = onClick)
+                .tapClickable(onClick = onClick)
                 .padding(horizontal = 18.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)

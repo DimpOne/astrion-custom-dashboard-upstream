@@ -1,9 +1,11 @@
 <!-- markdownlint-disable-next-line MD033 -->
+# <img src="docs/app-icon.svg" width="48" align="center" alt="Astrion Custom Icon"> Astrion Custom Dashboard
+
+<!-- markdownlint-disable-next-line MD033 -->
 <p align="center">
+  <!-- markdownlint-disable-next-line MD033 -->
   <img src="docs/banner_astrion_custom_dashboard.png" alt="Astrion Custom Dashboard Banner">
 </p>
-
-# <img src="docs/app-icon.svg" width="48" align="center" alt="Astrion Custom Icon"> Astrion Custom Dashboard
 
 [![GH-release](https://img.shields.io/github/v/release/dckiller51/astrion-custom-dashboard.svg?style=flat-square)](https://github.com/dckiller51/astrion-custom-dashboard/releases)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy_me_a_coffee-F16061?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/dckiller)
@@ -40,6 +42,12 @@ Building `dashboard.json` by hand is optional — the [**online dashboard editor
 ### Updates
 
 The same local page can check this repository's [GitHub Releases](https://github.com/dckiller51/astrion-custom-dashboard/releases) for a newer build and download + launch the system installer for it — no adb required for updates either. Android requires manually approving "install unknown apps" for Astrion Custom the first time (the page will prompt for it and tell you to try again once granted); after that, updating is just two taps.
+
+### Beta builds
+
+For testing fixes before they land in an official release, pushes to `dev` are also published as a rolling **pre-release** (tag `dev-latest`, overwritten by each new push — never picked up by the updater above, which explicitly skips pre-releases). Grab it from the [**online dashboard editor**](https://dckiller51.github.io/astrion-custom-dashboard/): flip the "Version bêta (dev)" switch near the top to reveal the current beta version and a direct APK download link.
+
+The beta installs as a separate app (`com.custom.astrion.debug`) alongside the official release — no signature conflict, no need to uninstall either one to switch between them. Its Home Assistant/Harmony settings are configured independently the first time you install it (see Local configuration above), then kept per install from then on.
 
 ### Translations
 

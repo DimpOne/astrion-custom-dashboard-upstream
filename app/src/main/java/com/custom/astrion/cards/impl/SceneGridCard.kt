@@ -1,9 +1,7 @@
 package com.custom.astrion.cards.impl
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,8 +24,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -37,7 +35,8 @@ import com.custom.astrion.cards.CardConfig
 import com.custom.astrion.cards.CardContext
 import com.custom.astrion.cards.CardRenderer
 import com.custom.astrion.ha.ServiceCall
-import java.io.File
+import com.custom.astrion.ui.decodeIconSampled
+import com.custom.astrion.ui.tapClickable
 
 /**
  * Scene, activity, or navigation grid tile.
@@ -205,13 +204,16 @@ class SceneGridCard : CardRenderer {
     @Composable
     private fun SceneButton(state: SceneButtonState, layout: TileLayout, modifier: Modifier, onClick: () -> Unit) {
         val textColor = if (luminance(state.color) > 0.75f) Color(0xFF141414) else Color(0xFFF0F2F6)
-        val bitmap = remember(state.iconPath) {
-            state.iconPath?.let {
-                runCatching {
-                    val f = File(it)
-                    if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
-                }.getOrNull()
-            }
+        // iconFill tiles render the bitmap at the full tile height (ContentScale.
+        // FillHeight), otherwise it's a 28dp square — pick the larger of the two
+        // as the downsample target so the same bitmap stays sharp in either mode
+        // without decoding at the source's full (often 2000+px) resolution.
+        val targetPx =
+            with(LocalDensity.current) {
+                (if (layout.iconFill) layout.tileHeight else 28).dp.toPx()
+            }.toInt()
+        val bitmap = remember(state.iconPath, targetPx) {
+            state.iconPath?.let { decodeIconSampled(it, targetPx) }
         }
 
         if (state.hasIcon) {
@@ -227,7 +229,7 @@ class SceneGridCard : CardRenderer {
                         .height(layout.tileHeight.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .background(state.color)
-                        .clickable(onClick = onClick)
+                        .tapClickable(onClick = onClick)
                         .padding(6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
@@ -256,7 +258,7 @@ class SceneGridCard : CardRenderer {
                     .height(58.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(state.color)
-                    .clickable(onClick = onClick)
+                    .tapClickable(onClick = onClick)
                     .padding(horizontal = 8.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -282,7 +284,7 @@ class SceneGridCard : CardRenderer {
                 .height(tileHeight.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(color)
-                .clickable(onClick = onClick)
+                .tapClickable(onClick = onClick)
                 .padding(6.dp),
             contentAlignment = Alignment.Center
         ) {

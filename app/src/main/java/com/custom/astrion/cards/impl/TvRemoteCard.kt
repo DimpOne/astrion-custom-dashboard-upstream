@@ -1,7 +1,6 @@
 package com.custom.astrion.cards.impl
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +37,7 @@ import com.custom.astrion.cards.CardContext
 import com.custom.astrion.cards.CardRenderer
 import com.custom.astrion.ha.ServiceCall
 import com.custom.astrion.ui.ThemeColors
+import com.custom.astrion.ui.tapClickable
 
 /**
  * TV / Android-TV remote card.
@@ -186,7 +186,7 @@ class TvRemoteCard : CardRenderer {
                 .height(48.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(theme.controlBackground)
-                .clickable(onClick = onClick),
+                .tapClickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
             Text(label, color = theme.primaryText, fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -244,7 +244,7 @@ class TvRemoteCard : CardRenderer {
                     .size(64.dp)
                     .clip(CircleShape)
                     .background(theme.controlBackground)
-                    .clickable(onClick = onCenter),
+                    .tapClickable(onClick = onCenter),
                 contentAlignment = Alignment.Center
             ) {
                 Text("OK", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -260,7 +260,7 @@ class TvRemoteCard : CardRenderer {
                 .size(52.dp)
                 .clip(CircleShape)
                 .background(theme.controlBackground)
-                .clickable(onClick = onClick),
+                .tapClickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
             Icon(icon, contentDescription = null, tint = tint)

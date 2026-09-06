@@ -1,8 +1,9 @@
 package com.custom.astrion.cards.impl
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -51,10 +52,13 @@ import com.custom.astrion.cards.CardConfig
 import com.custom.astrion.cards.CardContext
 import com.custom.astrion.cards.CardRenderer
 import com.custom.astrion.ha.EntityState
+import com.custom.astrion.ha.HaClient
 import com.custom.astrion.ha.ServiceCall
 import com.custom.astrion.ui.ThemeColors
 import com.custom.astrion.ui.icons.MdiIcons
+import com.custom.astrion.ui.tapClickable
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.delay
 
 /**
  * Media player card — styled after Home Assistant's Mushroom media-player
@@ -92,13 +96,33 @@ class MediaPlayerCard : CardRenderer {
     override val type = "media_player"
 
     @Suppress("UNCHECKED_CAST")
+    @OptIn(ExperimentalFoundationApi::class)
     @Composable
     override fun Render(config: CardConfig, ctx: CardContext) {
         val entityId = config.string("entity_id") ?: return
         val full = config.string("variant") == "full"
+        val playerConfig = resolveMediaPlayerConfig(config)
+
+        val e = ctx.entities[entityId]
+        val isOff = e == null || e.state == "off" || e.isUnavailable
+        val text = resolveMediaText(e, config, entityId, isOff, playerConfig.useMediaInfo, playerConfig.showVolumeLevel)
+
+        val artPath = e?.attrString("entity_picture")
+        var art by remember(artPath) { mutableStateOf<ImageBitmap?>(null) }
+        LaunchedEffect(artPath) { art = artPath?.let { ctx.client.fetchBitmap(it) } }
+
+        val actions = remember(entityId, ctx.client) { MediaActions(entityId, ctx.client) }
+
+        if (full) {
+            MediaFullVariant(ctx, e, entityId, text, art, actions, playerConfig)
+        } else {
+            MediaCompactVariant(MediaCompactData(entityId, e, text, art, actions, playerConfig, ctx.theme, ctx.client))
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun resolveMediaPlayerConfig(config: CardConfig): MediaPlayerConfig {
         val topButtons = (config.options["top_buttons"] as? List<Map<String, Any?>>) ?: emptyList()
-        val useMediaInfo = config.bool("use_media_info", true)
-        val showVolumeLevel = config.bool("show_volume_level", false)
         val mediaControls =
             (config.string("media_controls") ?: DEFAULT_MEDIA_CONTROLS)
                 .split(",")
@@ -109,90 +133,86 @@ class MediaPlayerCard : CardRenderer {
                 .split(",")
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
+        return MediaPlayerConfig(
+            topButtons = topButtons,
+            useMediaInfo = config.bool("use_media_info", true),
+            showVolumeLevel = config.bool("show_volume_level", false),
+            mediaControls = mediaControls,
+            volumeControls = volumeControls
+        )
+    }
 
-        val e = ctx.entities[entityId]
-        val isOff = e == null || e.state == "off" || e.isUnavailable
-
-        val title =
-            if (useMediaInfo && !isOff) {
-                e?.attrString("media_title") ?: config.string("name") ?: e?.friendlyName ?: entityId
-            } else {
-                config.string("name") ?: e?.friendlyName ?: entityId
-            }
-        val subtitle =
-            if (useMediaInfo && !isOff) {
-                e?.attrString("media_artist")
-                    ?: e?.attrString("media_series_title")
-                    ?: e?.attrString("app_name")
-            } else {
-                null
-            }
-        val stateLabel = subtitle ?: mediaStateLabel(e?.state)
-        val finalState =
-            if (showVolumeLevel && e?.attrDouble("volume_level") != null) {
-                val pct = ((e.attrDouble("volume_level") ?: 0.0) * 100).toInt()
-                "$stateLabel ⸱ $pct%"
-            } else {
-                stateLabel
-            }
-
-        val artPath = e?.attrString("entity_picture")
-        var art by remember(artPath) { mutableStateOf<ImageBitmap?>(null) }
-        LaunchedEffect(artPath) { art = artPath?.let { ctx.client.fetchBitmap(it) } }
-
-        fun mp(service: String, vararg data: Pair<String, Any?>) {
-            ctx.client.callService(ServiceCall.of("media_player", service, entityId, *data))
-        }
-
-        if (full) {
-            val blurredBg =
-                remember(art) {
-                    art?.let { img ->
-                        val src = img.asAndroidBitmap()
-                        if (src.width <= 0) return@let null
-                        val w = 32
-                        val h = (w * src.height / src.width).coerceAtLeast(1)
-                        src.scale(w, h, filter = true).asImageBitmap()
-                    }
+    @Composable
+    private fun MediaFullVariant(
+        ctx: CardContext,
+        e: EntityState?,
+        entityId: String,
+        text: MediaText,
+        art: ImageBitmap?,
+        actions: MediaActions,
+        playerConfig: MediaPlayerConfig
+    ) {
+        val blurredBg =
+            remember(art) {
+                art?.let { img ->
+                    val src = img.asAndroidBitmap()
+                    if (src.width <= 0) return@let null
+                    val w = 32
+                    val h = (w * src.height / src.width).coerceAtLeast(1)
+                    src.scale(w, h, filter = true).asImageBitmap()
                 }
-            Box(
-                modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(ctx.theme.cardSurface)
-            ) {
-                blurredBg?.let { bg ->
-                    Image(bg, null, modifier = Modifier.matchParentSize(), contentScale = ContentScale.Crop)
-                    Box(modifier = Modifier.matchParentSize().background(ctx.theme.background.copy(alpha = 0.7f)))
-                }
-                FullContent(ctx, e, entityId, title, subtitle ?: stateLabel, art, ::mp, topButtons, mediaControls, volumeControls)
             }
-        } else {
-            var showDetail by remember { mutableStateOf(false) }
-            CompactTile(
-                entityId = entityId,
-                e = e,
-                title = title,
-                state = finalState,
-                art = art,
-                mediaControls = mediaControls,
-                volumeControls = volumeControls,
-                theme = ctx.theme,
-                onTap = { mp("media_play_pause") },
-                onLongPress = { showDetail = true },
-                mp = ::mp
+        Box(
+            modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(ctx.theme.cardSurface)
+        ) {
+            blurredBg?.let { bg ->
+                Image(bg, null, modifier = Modifier.matchParentSize(), contentScale = ContentScale.Crop)
+                Box(modifier = Modifier.matchParentSize().background(ctx.theme.background.copy(alpha = 0.7f)))
+            }
+            FullContent(
+                ctx,
+                e,
+                entityId,
+                text.title,
+                text.subtitle ?: text.finalState,
+                art,
+                actions::fire,
+                playerConfig.topButtons,
+                playerConfig.mediaControls,
+                playerConfig.volumeControls
             )
-            if (showDetail) {
-                MediaPlayerDetailDialog(
-                    entityId = entityId,
-                    name = title,
-                    e = e,
-                    client = ctx.client,
-                    theme = ctx.theme,
-                    onClose = { showDetail = false }
-                )
-            }
+        }
+    }
+
+    @Composable
+    private fun MediaCompactVariant(data: MediaCompactData) {
+        var showDetail by remember { mutableStateOf(false) }
+        CompactTile(
+            entityId = data.entityId,
+            e = data.e,
+            title = data.text.title,
+            state = data.text.finalState,
+            art = data.art,
+            mediaControls = data.playerConfig.mediaControls,
+            volumeControls = data.playerConfig.volumeControls,
+            theme = data.theme,
+            onTap = { data.actions.fire("media_play_pause") },
+            onLongPress = { showDetail = true },
+            mp = data.actions::fire
+        )
+        if (showDetail) {
+            MediaPlayerDetailDialog(
+                entityId = data.entityId,
+                name = data.text.title,
+                e = data.e,
+                client = data.client,
+                theme = data.theme,
+                onClose = { showDetail = false }
+            )
         }
     }
 
@@ -210,6 +230,7 @@ class MediaPlayerCard : CardRenderer {
 
     // ---- compact: Mushroom-style tile ---------------------------------------
 
+    @OptIn(ExperimentalFoundationApi::class)
     @Composable
     private fun CompactTile(
         entityId: String,
@@ -235,10 +256,20 @@ class MediaPlayerCard : CardRenderer {
         var showVolume by remember(entityId) { mutableStateOf(!hasMediaGroup && hasVolumeGroup) }
         val activeIsVolume = showVolume && hasVolumeGroup
 
+        // combinedClickable (not a raw pointerInput/detectTapGestures) so the
+        // whole tile stays a normal focusable/clickable target: a bare
+        // pointerInput never enters Compose's focus system, so a physical
+        // remote's D-pad had nothing to land on here at all, and its
+        // long-press never fired via a held key regardless — see LightCard's
+        // identical fix. rememberLongPressKeyModifier separately covers a
+        // held hardware key, which combinedClickable's onLongClick never
+        // does on its own.
         val gestureModifier =
-            Modifier.pointerInput(entityId) {
-                detectTapGestures(onTap = { onTap() }, onLongPress = { onLongPress() })
-            }
+            rememberLongPressKeyModifier(entityId) { onLongPress() }
+                .combinedClickable(
+                    onClick = onTap,
+                    onLongClick = onLongPress
+                )
 
         Column(
             modifier =
@@ -249,81 +280,102 @@ class MediaPlayerCard : CardRenderer {
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().then(gestureModifier),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val avatarMod = Modifier.size(42.dp).clip(CircleShape)
-                if (art != null) {
-                    Image(art, null, modifier = avatarMod, contentScale = ContentScale.Crop)
-                } else {
-                    val isOff = e == null || e.state == "off" || e.isUnavailable
-                    Box(
-                        avatarMod.background(if (isOff) theme.controlBackground else theme.accentSecondary),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            if (isOff) MdiIcons.CastOff else MdiIcons.Cast,
-                            contentDescription = null,
-                            tint = if (isOff) theme.iconTint else Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        title,
-                        color = theme.primaryText,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        state,
-                        color = theme.mutedText,
-                        fontSize = 13.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+            CompactTileHeader(art, e, title, state, theme, Modifier.fillMaxWidth().then(gestureModifier))
+            if (hasMediaGroup || hasVolumeGroup) {
+                CompactTileControlsRow(
+                    CompactTileGroups(entityId, e, mediaButtons, volumeButtons, hasVolumeSlider, theme, mp),
+                    activeIsVolume
+                ) { showVolume = !showVolume }
+            }
+        }
+    }
+
+    @Composable
+    private fun CompactTileHeader(
+        art: ImageBitmap?,
+        e: EntityState?,
+        title: String,
+        state: String,
+        theme: ThemeColors,
+        modifier: Modifier
+    ) {
+        Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+            val avatarMod = Modifier.size(42.dp).clip(CircleShape)
+            if (art != null) {
+                Image(art, null, modifier = avatarMod, contentScale = ContentScale.Crop)
+            } else {
+                val isOff = e == null || e.state == "off" || e.isUnavailable
+                Box(
+                    avatarMod.background(if (isOff) theme.controlBackground else theme.accentSecondary),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        if (isOff) MdiIcons.CastOff else MdiIcons.Cast,
+                        contentDescription = null,
+                        tint = if (isOff) theme.iconTint else Color.White,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    color = theme.primaryText,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    state,
+                    color = theme.mutedText,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
 
-            if (hasMediaGroup || hasVolumeGroup) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (activeIsVolume) {
-                        if (hasVolumeSlider) {
-                            VolumeSlider(entityId, e, Modifier.weight(1f), theme) { level ->
-                                mp("volume_set", arrayOf("volume_level" to level))
-                            }
-                        }
-                        volumeButtons.forEach { b -> TileButton(b.icon, theme = theme) { mp(b.action, b.data.toTypedArray()) } }
-                    } else {
-                        mediaButtons.forEach { b ->
-                            TileButton(b.icon, theme = theme, accent = b.active || b.action == "media_play" || b.action == "media_pause") {
-                                mp(b.action, b.data.toTypedArray())
-                            }
-                        }
-                    }
-                    if (hasMediaGroup && hasVolumeGroup) {
-                        // The slider already has weight(1f) and fills the row on
-                        // its own — only insert a spacer to push the swap button
-                        // to the end when there's no slider doing that already
-                        // (Modifier.weight requires a value > 0, so this can't
-                        // just be a conditional weight(0f) on an always-present Spacer).
-                        if (!(activeIsVolume && hasVolumeSlider)) {
-                            Spacer(Modifier.weight(1f))
-                        }
-                        TileButton(if (activeIsVolume) MdiIcons.Play else MdiIcons.VolumeHigh, theme = theme) {
-                            showVolume = !showVolume
-                        }
+    @Composable
+    private fun CompactTileControlsRow(groups: CompactTileGroups, activeIsVolume: Boolean, onToggleGroup: () -> Unit) {
+        val hasVolumeGroup = groups.volumeButtons.isNotEmpty() || groups.hasVolumeSlider
+        val hasMediaGroup = groups.mediaButtons.isNotEmpty()
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (activeIsVolume) {
+                if (groups.hasVolumeSlider) {
+                    VolumeSlider(groups.entityId, groups.e, Modifier.weight(1f), groups.theme) { level ->
+                        groups.mp("volume_set", arrayOf("volume_level" to level))
                     }
                 }
+                groups.volumeButtons.forEach { b ->
+                    TileButton(
+                        b.icon,
+                        theme = groups.theme
+                    ) { groups.mp(b.action, b.data.toTypedArray()) }
+                }
+            } else {
+                groups.mediaButtons.forEach { b ->
+                    TileButton(b.icon, theme = groups.theme, accent = b.active || b.action == "media_play" || b.action == "media_pause") {
+                        groups.mp(b.action, b.data.toTypedArray())
+                    }
+                }
+            }
+            if (hasMediaGroup && hasVolumeGroup) {
+                // The slider already has weight(1f) and fills the row on its
+                // own — only insert a spacer to push the swap button to the
+                // end when there's no slider doing that already (Modifier.weight
+                // requires a value > 0, so this can't just be a conditional
+                // weight(0f) on an always-present Spacer).
+                if (!(activeIsVolume && groups.hasVolumeSlider)) {
+                    Spacer(Modifier.weight(1f))
+                }
+                TileButton(if (activeIsVolume) MdiIcons.Play else MdiIcons.VolumeHigh, theme = groups.theme, onClick = onToggleGroup)
             }
         }
     }
@@ -336,7 +388,7 @@ class MediaPlayerCard : CardRenderer {
                 .size(36.dp)
                 .clip(RoundedCornerShape(10.dp))
                 .background(if (accent) theme.accentSecondary else theme.controlBackground)
-                .clickable(onClick = onClick),
+                .tapClickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
             Icon(icon, contentDescription = null, tint = theme.primaryText, modifier = Modifier.size(18.dp))
@@ -418,7 +470,7 @@ class MediaPlayerCard : CardRenderer {
                                 .height(44.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(ctx.theme.controlBackground.copy(alpha = 0.4f))
-                                .clickable { fireService(ctx, b) },
+                                .tapClickable { fireService(ctx, b) },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -517,15 +569,25 @@ class MediaPlayerCard : CardRenderer {
         // most other media players, so attrString() would always see null
         // for it and this key would never change between tracks. toString()
         // works for both shapes and still changes when the track does.
-        var elapsed by remember(e.entityId, e.attr("media_content_id")?.toString()) {
+        val contentId = e.attr("media_content_id")?.toString()
+        val positionBaseline = e.attrDouble("media_position")
+        val positionUpdatedAt = e.attrString("media_position_updated_at")
+
+        var elapsed by remember(e.entityId, contentId) {
             mutableDoubleStateOf(currentMediaPosition(e))
         }
-        LaunchedEffect(e.entityId, e.state, e.attr("media_content_id")?.toString()) {
-            while (e.state == "playing") {
-                elapsed = currentMediaPosition(e)
-                kotlinx.coroutines.delay(1.seconds)
-            }
+        // Restarts on entity/track/state changes AND whenever the server
+        // reports a fresh position baseline (positionBaseline/positionUpdatedAt)
+        // — without those two in the key, a seek mid-track wouldn't restart
+        // this coroutine (state and content_id are unchanged by a seek), so
+        // it kept ticking from its stale captured baseline forever, drifting
+        // away from the real position instead of tracking it.
+        LaunchedEffect(e.entityId, e.state, contentId, positionBaseline, positionUpdatedAt) {
             elapsed = currentMediaPosition(e)
+            while (e.state == "playing") {
+                delay(1.seconds)
+                elapsed = currentMediaPosition(e)
+            }
         }
         val fraction = if (duration > 0) (elapsed / duration).toFloat().coerceIn(0f, 1f) else 0f
         Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -560,7 +622,7 @@ class MediaPlayerCard : CardRenderer {
                 .size(size)
                 .clip(CircleShape)
                 .background(if (accent) theme.accentSecondary else theme.controlBackground.copy(alpha = 0.33f))
-                .clickable(onClick = onClick),
+                .tapClickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
             Icon(icon, contentDescription = null, tint = Color.White)
@@ -579,6 +641,83 @@ class MediaPlayerCard : CardRenderer {
     }
 }
 
+// ---- pulled out of Render()/CompactTile() to keep them under detekt's length/complexity limits ----
+
+private data class MediaPlayerConfig(
+    val topButtons: List<Map<String, Any?>>,
+    val useMediaInfo: Boolean,
+    val showVolumeLevel: Boolean,
+    val mediaControls: List<String>,
+    val volumeControls: List<String>
+)
+
+private data class MediaText(val title: String, val subtitle: String?, val finalState: String)
+
+/** Everything MediaCompactVariant needs, bundled so the function stays under detekt's parameter-count limit. */
+private data class MediaCompactData(
+    val entityId: String,
+    val e: EntityState?,
+    val text: MediaText,
+    val art: ImageBitmap?,
+    val actions: MediaActions,
+    val playerConfig: MediaPlayerConfig,
+    val theme: ThemeColors,
+    val client: HaClient
+)
+
+/** Fires media_player.* services — pulled out of Render() to keep it short. */
+private class MediaActions(private val entityId: String, private val client: HaClient) {
+    fun fire(service: String, vararg data: Pair<String, Any?>) {
+        client.callService(ServiceCall.of("media_player", service, entityId, *data))
+    }
+}
+
+/** Everything CompactTileControlsRow needs, bundled so the function stays under detekt's parameter-count limit. */
+private data class CompactTileGroups(
+    val entityId: String,
+    val e: EntityState?,
+    val mediaButtons: List<MpButton>,
+    val volumeButtons: List<MpButton>,
+    val hasVolumeSlider: Boolean,
+    val theme: ThemeColors,
+    val mp: (String, Array<out Pair<String, Any?>>) -> Unit
+)
+
+private fun resolveMediaTitle(e: EntityState?, config: CardConfig, entityId: String, useMediaInfo: Boolean, isOff: Boolean): String =
+    if (useMediaInfo && !isOff) {
+        e?.attrString("media_title") ?: config.string("name") ?: e?.friendlyName ?: entityId
+    } else {
+        config.string("name") ?: e?.friendlyName ?: entityId
+    }
+
+private fun resolveMediaSubtitle(e: EntityState?, useMediaInfo: Boolean, isOff: Boolean): String? = if (useMediaInfo && !isOff) {
+    e?.attrString("media_artist") ?: e?.attrString("media_series_title") ?: e?.attrString("app_name")
+} else {
+    null
+}
+
+@Composable
+private fun resolveMediaText(
+    e: EntityState?,
+    config: CardConfig,
+    entityId: String,
+    isOff: Boolean,
+    useMediaInfo: Boolean,
+    showVolumeLevel: Boolean
+): MediaText {
+    val title = resolveMediaTitle(e, config, entityId, useMediaInfo, isOff)
+    val subtitle = resolveMediaSubtitle(e, useMediaInfo, isOff)
+    val stateLabel = subtitle ?: mediaStateLabel(e?.state)
+    val finalState =
+        if (showVolumeLevel && e?.attrDouble("volume_level") != null) {
+            val pct = ((e.attrDouble("volume_level") ?: 0.0) * 100).toInt()
+            "$stateLabel ⸱ $pct%"
+        } else {
+            stateLabel
+        }
+    return MediaText(title = title, subtitle = subtitle, finalState = finalState)
+}
+
 // ---- shared feature/state helpers, also used by MediaPlayerDetailDialog ---
 
 internal object Feature {
@@ -594,6 +733,10 @@ internal object Feature {
     const val STOP = 4096
     const val PLAY = 16384
     const val SHUFFLE_SET = 32768
+
+    // Home Assistant's media_player.const.SUPPORT_BROWSE_MEDIA — gates the
+    // "Browse" button in MediaPlayerDetailDialog that opens MediaBrowser.
+    const val BROWSE_MEDIA = 131072
     const val REPEAT_SET = 262144
 }
 
@@ -618,7 +761,14 @@ internal fun currentMediaPosition(e: EntityState): Double {
     if (e.state != "playing") return pos
     val updatedAt = e.attrString("media_position_updated_at") ?: return pos
     return try {
-        val then = java.time.Instant.parse(updatedAt)
+        // Instant.parse() only accepts a literal "Z" for UTC (strict
+        // ISO_INSTANT) — Home Assistant reports a numeric offset instead
+        // ("...+00:00"), which Instant.parse() rejects outright. That
+        // exception was silently swallowed by the catch below, so this
+        // always fell back to the raw static `pos` and never advanced —
+        // the "position only changes on pause" symptom. OffsetDateTime
+        // accepts both "+00:00" and "Z".
+        val then = java.time.OffsetDateTime.parse(updatedAt).toInstant()
         val elapsedSince =
             java.time.Duration
                 .between(then, java.time.Instant.now())

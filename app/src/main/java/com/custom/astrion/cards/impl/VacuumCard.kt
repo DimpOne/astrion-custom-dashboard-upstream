@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import android.graphics.Matrix
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,6 +53,7 @@ import com.custom.astrion.cards.CardRenderer
 import com.custom.astrion.ha.HaLabels
 import com.custom.astrion.ha.ServiceCall
 import com.custom.astrion.ui.ThemeColors
+import com.custom.astrion.ui.tapClickable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -128,7 +128,7 @@ fun VacuumPanelContent(options: Map<String, Any?>, ctx: CardContext) {
     val entityId = options["entity_id"] as? String ?: return
     val e = ctx.entities[entityId]
     val state = e?.state ?: "unknown"
-    val name = options["name"] as? String ?: e?.friendlyName ?: "Vacuum"
+    val name = options["name"] as? String ?: e?.friendlyName ?: stringResource(R.string.vacuum_default_name)
     val fanSpeed = e?.attrString("fan_speed")
     val fanList = e?.attrStringList("fan_speed_list") ?: emptyList()
     val mapEntity = options["map_image"] as? String
@@ -209,7 +209,7 @@ fun VacuumPanelContent(options: Map<String, Any?>, ctx: CardContext) {
         ) {
             Image(
                 bitmap = bmp,
-                contentDescription = "Vacuum map",
+                contentDescription = stringResource(R.string.vacuum_map_label),
                 modifier = Modifier.fillMaxSize().graphicsLayer(scaleX = 1.9f, scaleY = 1.9f),
                 contentScale = ContentScale.Fit
             )
@@ -236,7 +236,7 @@ fun VacuumPanelContent(options: Map<String, Any?>, ctx: CardContext) {
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
                     .background(ctx.theme.controlBackground)
-                    .clickable { fanExpanded = true }
+                    .tapClickable { fanExpanded = true }
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -289,7 +289,7 @@ fun VacuumPanelContent(options: Map<String, Any?>, ctx: CardContext) {
                             .height(44.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(ctx.theme.controlBackground)
-                            .clickable(enabled = id != null) { id?.let { cleanSegment(it) } },
+                            .tapClickable(enabled = id != null) { id?.let { cleanSegment(it) } },
                         contentAlignment = Alignment.Center
                     ) {
                         Text(label, color = ctx.theme.primaryText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
@@ -340,7 +340,7 @@ private fun VacuumCtrlBtn(icon: ImageVector, theme: ThemeColors, accent: Boolean
             .size(52.dp)
             .clip(CircleShape)
             .background(if (accent) theme.accentSecondary else theme.controlBackground)
-            .clickable(onClick = onClick),
+            .tapClickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, contentDescription = null, tint = Color.White)

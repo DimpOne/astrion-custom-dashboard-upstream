@@ -1,7 +1,8 @@
 package com.custom.astrion.cards.impl
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -24,7 +25,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -45,10 +45,13 @@ import com.custom.astrion.R
 import com.custom.astrion.cards.CardConfig
 import com.custom.astrion.cards.CardContext
 import com.custom.astrion.cards.CardRenderer
+import com.custom.astrion.ha.EntityState
+import com.custom.astrion.ha.HaClient
 import com.custom.astrion.ha.HaLabels
 import com.custom.astrion.ha.ServiceCall
 import com.custom.astrion.ui.ThemeColors
 import com.custom.astrion.ui.icons.MdiIcons
+import com.custom.astrion.ui.tapClickable
 import kotlin.math.roundToInt
 
 /**
@@ -95,128 +98,75 @@ import kotlin.math.roundToInt
 class CoverCard : CardRenderer {
     override val type = "cover"
 
+    @OptIn(ExperimentalFoundationApi::class)
     @Composable
     override fun Render(config: CardConfig, ctx: CardContext) {
         val entityId = config.string("entity_id") ?: return
         val e = ctx.entities[entityId]
         val name = config.string("name") ?: e?.friendlyName ?: entityId
-        val position = e?.attrInt("current_position") // 0..100
-        val tilt = e?.attrInt("current_tilt_position") // 0..100, null if unsupported
         val rawState = e?.state ?: "unknown"
+        val coverState = resolveCoverState(e, rawState)
+        val stateLabel = coverStateLabel(coverState.position, rawState)
 
-        // A cover with no position attribute (some cover devices don't report
-        // one) falls back to its raw open/closed state instead.
-        val isOpen = position?.let { it >= 100 } ?: (rawState == "open")
-        val isClosed = position?.let { it <= 0 } ?: (rawState == "closed")
-        val showOpenIcon = !isClosed
-        val coverIcon = if (showOpenIcon) MdiIcons.WindowShutterOpen else MdiIcons.WindowShutterClosed
-
-        val stateLabel =
-            when {
-                position == 100 -> stringResource(R.string.cover_open)
-                position == 0 -> stringResource(R.string.cover_closed)
-                position != null -> stringResource(R.string.cover_position_open, position)
-                else -> HaLabels.coverState(rawState)
-            }
-
-        fun call(service: String) {
-            ctx.client.callService(ServiceCall(domain = "cover", service = service, entityId = entityId))
-        }
-
-        fun setPosition(pct: Int) {
-            ctx.client.callService(ServiceCall.of("cover", "set_cover_position", entityId, "position" to pct))
-        }
-
-        fun setTiltPosition(pct: Int) {
-            ctx.client.callService(ServiceCall.of("cover", "set_cover_tilt_position", entityId, "tilt_position" to pct))
-        }
-
-        // ---- which controls are enabled -----------------------------------
-        // Mirrors Mushroom's cover card: 3 independent flags. If none of the
-        // 3 keys are present in the config at all, fall back to the
-        // historical default (buttons only) so existing dashboards keep
-        // rendering exactly as before.
-        val opts = config.options
-        val hasExplicitControls =
-            opts.containsKey("show_buttons_control") ||
-                opts.containsKey("show_position_control") ||
-                opts.containsKey("show_tilt_position_control")
-        val showButtons = config.bool("show_buttons_control", !hasExplicitControls)
-        val showPosition = config.bool("show_position_control", false) && position != null
-        val showTilt = config.bool("show_tilt_position_control", false) && tilt != null
-
-        val controls =
-            buildList {
-                if (showButtons) add(CoverControl.BUTTONS)
-                if (showPosition) add(CoverControl.POSITION)
-                if (showTilt) add(CoverControl.TILT)
-            }
+        val controls = resolveCoverControls(config, coverState.position, coverState.tilt)
+        val actions = remember(entityId, ctx.client) { CoverActions(entityId, ctx.client) }
 
         // Long-press anywhere on the tile opens the detail dialog — same
-        // gesture LightCard uses to open LightDetailDialog.
+        // gesture LightCard uses to open LightDetailDialog. combinedClickable
+        // (not a raw pointerInput/detectTapGestures) so the tile is a real
+        // focusable target: a bare pointerInput never enters Compose's focus
+        // system, so a physical remote's D-pad had nothing to land on here
+        // at all, and its long-press never fired via a held key regardless.
+        // onClick is a no-op — this tile has no single-tap action of its
+        // own (covers use the separate open/stop/close buttons instead) —
+        // it's kept only so the tile stays focusable and long-press-able.
+        // rememberLongPressKeyModifier separately covers a held hardware
+        // key, which combinedClickable's onLongClick never does on its own.
         var showDetail by remember { mutableStateOf(false) }
         val tileGestureModifier =
-            Modifier.pointerInput(entityId) {
-                detectTapGestures(onLongPress = { showDetail = true })
-            }
+            rememberLongPressKeyModifier(entityId) { showDetail = true }
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = { showDetail = true }
+                )
 
         // Hoisted here (not inside a layout function) so the active-control
         // state survives regardless of which layout renders it.
         var activeControl by remember(entityId) { mutableStateOf(controls.firstOrNull()) }
         val resolvedActive = activeControl?.takeIf { it in controls } ?: controls.firstOrNull()
+        val rowData =
+            CoverRowData(
+                entityId,
+                coverState.isOpen,
+                coverState.isClosed,
+                coverState.position,
+                coverState.tilt,
+                ctx.theme,
+                controls,
+                actions
+            )
 
         val controlsSlot: @Composable (fillWidth: Boolean) -> Unit = { fillWidth ->
-            if (controls.isNotEmpty()) {
-                Row(
-                    modifier = if (fillWidth) Modifier.fillMaxWidth() else Modifier,
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Box(Modifier.weight(1f, fill = fillWidth)) {
-                        when (resolvedActive) {
-                            CoverControl.BUTTONS ->
-                                ControlsRow(
-                                    isOpen,
-                                    isClosed,
-                                    ::call,
-                                    theme = ctx.theme,
-                                    modifier = if (fillWidth) Modifier.fillMaxWidth() else Modifier,
-                                    arrangement = if (fillWidth) Arrangement.SpaceEvenly else Arrangement.spacedBy(8.dp)
-                                )
-                            CoverControl.POSITION ->
-                                PercentSlider(
-                                    entityId = "$entityId-position",
-                                    value = position ?: 0,
-                                    color = ctx.theme.accent,
-                                    theme = ctx.theme,
-                                    onCommit = ::setPosition
-                                )
-                            CoverControl.TILT ->
-                                PercentSlider(
-                                    entityId = "$entityId-tilt",
-                                    value = tilt ?: 0,
-                                    color = ctx.theme.success,
-                                    theme = ctx.theme,
-                                    onCommit = ::setTiltPosition
-                                )
-                            null -> {}
-                        }
-                    }
-                    if (controls.size > 1) {
-                        CycleControlButton(theme = ctx.theme) {
-                            val idx = controls.indexOf(resolvedActive)
-                            activeControl = controls[(idx + 1) % controls.size]
-                        }
-                    }
+            CoverControlsRow(
+                fillWidth = fillWidth,
+                data = rowData,
+                resolvedActive = resolvedActive,
+                onCycle = {
+                    val idx = controls.indexOf(resolvedActive)
+                    activeControl = controls[(idx + 1) % controls.size]
                 }
-            }
+            )
         }
 
-        when (config.string("layout")) {
-            "horizontal" -> HorizontalLayout(name, stateLabel, coverIcon, controlsSlot, ctx.theme, modifier = tileGestureModifier)
-            "vertical" -> VerticalLayout(name, stateLabel, coverIcon, controlsSlot, ctx.theme, modifier = tileGestureModifier)
-            else -> DefaultLayout(name, stateLabel, coverIcon, controlsSlot, ctx.theme, modifier = tileGestureModifier)
-        }
+        CoverTileLayout(
+            layout = config.string("layout"),
+            name = name,
+            stateLabel = stateLabel,
+            icon = coverState.icon,
+            controlsSlot = controlsSlot,
+            theme = ctx.theme,
+            modifier = tileGestureModifier
+        )
 
         if (showDetail) {
             CoverDetailDialog(
@@ -232,6 +182,137 @@ class CoverCard : CardRenderer {
 }
 
 private enum class CoverControl { BUTTONS, POSITION, TILT }
+
+/** Position/tilt/open-closed resolved once per recomposition — pulled out of Render() to keep it short. */
+private data class CoverState(val position: Int?, val tilt: Int?, val isOpen: Boolean, val isClosed: Boolean, val icon: ImageVector)
+
+// A cover with no position attribute (some cover devices don't report one)
+// falls back to its raw open/closed state instead.
+private fun resolveCoverState(e: EntityState?, rawState: String): CoverState {
+    val position = e?.attrInt("current_position")
+    val tilt = e?.attrInt("current_tilt_position")
+    val isOpen = position?.let { it >= 100 } ?: (rawState == "open")
+    val isClosed = position?.let { it <= 0 } ?: (rawState == "closed")
+    val icon = if (!isClosed) MdiIcons.WindowShutterOpen else MdiIcons.WindowShutterClosed
+    return CoverState(position, tilt, isOpen, isClosed, icon)
+}
+
+@Composable
+private fun coverStateLabel(position: Int?, rawState: String): String = when {
+    position == 100 -> stringResource(R.string.cover_open)
+    position == 0 -> stringResource(R.string.cover_closed)
+    position != null -> stringResource(R.string.cover_position_open, position)
+    else -> HaLabels.coverState(rawState)
+}
+
+// Mirrors Mushroom's cover card: 3 independent flags. If none of the 3 keys
+// are present in the config at all, falls back to the historical default
+// (buttons only) so existing dashboards keep rendering exactly as before.
+private fun resolveCoverControls(config: CardConfig, position: Int?, tilt: Int?): List<CoverControl> {
+    val opts = config.options
+    val hasExplicitControls =
+        opts.containsKey("show_buttons_control") ||
+            opts.containsKey("show_position_control") ||
+            opts.containsKey("show_tilt_position_control")
+    val showButtons = config.bool("show_buttons_control", !hasExplicitControls)
+    val showPosition = config.bool("show_position_control", false) && position != null
+    val showTilt = config.bool("show_tilt_position_control", false) && tilt != null
+    return buildList {
+        if (showButtons) add(CoverControl.BUTTONS)
+        if (showPosition) add(CoverControl.POSITION)
+        if (showTilt) add(CoverControl.TILT)
+    }
+}
+
+/** Fires cover.* services for the tile's various controls — pulled out of Render() to keep it short. */
+private class CoverActions(private val entityId: String, private val client: HaClient) {
+    fun call(service: String) {
+        client.callService(ServiceCall(domain = "cover", service = service, entityId = entityId))
+    }
+
+    fun setPosition(pct: Int) {
+        client.callService(ServiceCall.of("cover", "set_cover_position", entityId, "position" to pct))
+    }
+
+    fun setTiltPosition(pct: Int) {
+        client.callService(ServiceCall.of("cover", "set_cover_tilt_position", entityId, "tilt_position" to pct))
+    }
+}
+
+/** Everything CoverControlsRow needs, bundled so the function stays under detekt's parameter-count limit. */
+private data class CoverRowData(
+    val entityId: String,
+    val isOpen: Boolean,
+    val isClosed: Boolean,
+    val position: Int?,
+    val tilt: Int?,
+    val theme: ThemeColors,
+    val controls: List<CoverControl>,
+    val actions: CoverActions
+)
+
+/** The active control's buttons/slider, plus the cycle button when more than one control is enabled. */
+@Composable
+private fun CoverControlsRow(fillWidth: Boolean, data: CoverRowData, resolvedActive: CoverControl?, onCycle: () -> Unit) {
+    if (data.controls.isEmpty()) return
+    Row(
+        modifier = if (fillWidth) Modifier.fillMaxWidth() else Modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Box(Modifier.weight(1f, fill = fillWidth)) {
+            when (resolvedActive) {
+                CoverControl.BUTTONS ->
+                    ControlsRow(
+                        data.isOpen,
+                        data.isClosed,
+                        data.actions::call,
+                        theme = data.theme,
+                        modifier = if (fillWidth) Modifier.fillMaxWidth() else Modifier,
+                        arrangement = if (fillWidth) Arrangement.SpaceEvenly else Arrangement.spacedBy(8.dp)
+                    )
+                CoverControl.POSITION ->
+                    PercentSlider(
+                        entityId = "${data.entityId}-position",
+                        value = data.position ?: 0,
+                        color = data.theme.accent,
+                        theme = data.theme,
+                        onCommit = data.actions::setPosition
+                    )
+                CoverControl.TILT ->
+                    PercentSlider(
+                        entityId = "${data.entityId}-tilt",
+                        value = data.tilt ?: 0,
+                        color = data.theme.success,
+                        theme = data.theme,
+                        onCommit = data.actions::setTiltPosition
+                    )
+                null -> {}
+            }
+        }
+        if (data.controls.size > 1) {
+            CycleControlButton(theme = data.theme, onClick = onCycle)
+        }
+    }
+}
+
+/** Picks default/horizontal/vertical based on the config's "layout" string — unrecognized/missing values fall back to default. */
+@Composable
+private fun CoverTileLayout(
+    layout: String?,
+    name: String,
+    stateLabel: String,
+    icon: ImageVector,
+    controlsSlot: @Composable (fillWidth: Boolean) -> Unit,
+    theme: ThemeColors,
+    modifier: Modifier
+) {
+    when (layout) {
+        "horizontal" -> HorizontalLayout(name, stateLabel, icon, controlsSlot, theme, modifier = modifier)
+        "vertical" -> VerticalLayout(name, stateLabel, icon, controlsSlot, theme, modifier = modifier)
+        else -> DefaultLayout(name, stateLabel, icon, controlsSlot, theme, modifier = modifier)
+    }
+}
 
 // ---- shared pieces ---------------------------------------------------------
 
@@ -296,7 +377,7 @@ private fun CircleBtn(icon: ImageVector, theme: ThemeColors, enabled: Boolean = 
             .clip(CircleShape)
             .background(theme.controlBackground)
             .alpha(if (enabled) 1f else 0.35f)
-            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier),
+            .then(if (enabled) Modifier.tapClickable(onClick = onClick) else Modifier),
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, contentDescription = null, tint = theme.iconTint)
@@ -312,7 +393,7 @@ private fun CycleControlButton(theme: ThemeColors, onClick: () -> Unit) {
             .size(36.dp)
             .clip(CircleShape)
             .background(theme.controlBackground)
-            .clickable(onClick = onClick),
+            .tapClickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = theme.iconTint)
@@ -322,14 +403,19 @@ private fun CycleControlButton(theme: ThemeColors, onClick: () -> Unit) {
 /**
  * Draggable 0-100% slider used for both the position and tilt controls —
  * drag or tap anywhere on it, released value fires [onCommit]. Shows the
- * live percentage as a centered label, Mushroom-slider-style.
+ * live percentage as a centered label, Mushroom-slider-style. The drag
+ * override is held after commit until the live state catches up, so the bar
+ * doesn't snap back to the stale pre-drag value before HA confirms — see
+ * [TrackDragFraction].
  */
 @Composable
 private fun PercentSlider(entityId: String, value: Int, color: Color, theme: ThemeColors, onCommit: (Int) -> Unit) {
-    // Uses -1f as a sentinel to denote 'no active drag', avoiding Float autoboxing.
-    var dragFraction by remember(entityId) { mutableFloatStateOf(-1f) }
+    val drag = rememberDragFraction(entityId)
+    var dragFraction by drag
     val liveFraction = (value / 100f).coerceIn(0f, 1f)
     val shownFraction = if (dragFraction >= 0f) dragFraction else liveFraction
+
+    TrackDragFraction(drag, liveFraction)
 
     Box(
         modifier =
@@ -344,9 +430,8 @@ private fun PercentSlider(entityId: String, value: Int, color: Color, theme: The
                         if (dragFraction >= 0f) {
                             onCommit((dragFraction * 100).roundToInt())
                         }
-                        dragFraction = -1f
                     },
-                    onDragCancel = { dragFraction = -1f }
+                    onDragCancel = { dragFraction = DRAG_FRACTION_INACTIVE }
                 ) { change, _ ->
                     dragFraction = (change.position.x / size.width).coerceIn(0f, 1f)
                 }
@@ -355,7 +440,6 @@ private fun PercentSlider(entityId: String, value: Int, color: Color, theme: The
                     val f = (offset.x / size.width).coerceIn(0f, 1f)
                     dragFraction = f
                     onCommit((f * 100).roundToInt())
-                    dragFraction = -1f
                 }
             },
         contentAlignment = Alignment.Center

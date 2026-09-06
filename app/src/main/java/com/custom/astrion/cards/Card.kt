@@ -32,6 +32,44 @@ data class CardConfig(
 }
 
 /**
+ * The device-level toggles shown on the settings page, bundled into one
+ * value instead of 8 separate constructor params on both [CardContext] and
+ * `Dashboard()` — the settings page reads/writes these as a group anyway
+ * (see SettingsMenu.kt's WakeOnMotionRow/WifiKeepAwakeRow/ConfigServerRow/
+ * TapFeedbackRow), no card renderer needs any of them individually.
+ */
+data class DeviceSettingsState(
+    /** Current state of the motion-wake feature, and a way to toggle it —
+     * used by the settings page (mirrors HaRemote's "Wake on movement" switch). */
+    val wakeOnMotionEnabled: Boolean = true,
+    val setWakeOnMotionEnabled: (Boolean) -> Unit = {},
+    /** Current state of the Wi-Fi-keep-awake feature, and a way to toggle it
+     * — used by the settings page. Off by default: it disables the Wi-Fi
+     * radio's own power-save the whole time it's held, a real continuous
+     * battery cost on a device that's mostly idle/screen-off. Fixes Home
+     * Assistant intermittently failing to reach this device (the
+     * astrion.set_page/start_activity services, or the push-webhook
+     * feature) while the screen's off — worth it only if you actually rely
+     * on either while the screen would otherwise be off. */
+    val wifiKeepAwakeEnabled: Boolean = false,
+    val setWifiKeepAwakeEnabled: (Boolean) -> Unit = {},
+    /** Current state of the local :8080 config/builder server, and a way to
+     * toggle it — used by the settings page. Left running by default; once a
+     * device is fully set up, turning it off closes an unauthenticated LAN
+     * admin surface (connection settings, dashboard.json, icon uploads) that
+     * has no further reason to stay open. */
+    val configServerEnabled: Boolean = true,
+    val setConfigServerEnabled: (Boolean) -> Unit = {},
+    /** Current state of the tap-feedback feature, and a way to toggle it —
+     * used by the settings page. When on, tappable elements emit the same
+     * little "tap" notice the device's own Android UI menus do (via
+     * [com.custom.astrion.ui.LocalTapFeedback] + Modifier.tapClickable);
+     * when off they stay silent. See TapFeedback.kt for details. */
+    val tapFeedbackEnabled: Boolean = true,
+    val setTapFeedbackEnabled: (Boolean) -> Unit = {}
+)
+
+/**
  * Context handed to every card render.
  *
  * Gives the card read access to live entity states and service calls.
@@ -48,17 +86,9 @@ class CardContext(
     /** Sends an IR command to a device directly on a hub (bypasses HA). `hub` is a
      * HarmonyHubConfig.localId; null/blank falls back to the first configured hub. */
     val sendHarmonyCommand: (deviceId: String, command: String, hub: String?) -> Unit = { _, _, _ -> },
-    /** Current state of the motion-wake feature, and a way to toggle it —
-     * used by the settings page (mirrors HaRemote's "Wake on movement" switch). */
-    val wakeOnMotionEnabled: Boolean = true,
-    val setWakeOnMotionEnabled: (Boolean) -> Unit = {},
-    /** Current state of the local :8080 config/builder server, and a way to
-     * toggle it — used by the settings page. Left running by default; once a
-     * device is fully set up, turning it off closes an unauthenticated LAN
-     * admin surface (connection settings, dashboard.json, icon uploads) that
-     * has no further reason to stay open. */
-    val configServerEnabled: Boolean = true,
-    val setConfigServerEnabled: (Boolean) -> Unit = {},
+    /** The settings-page toggles (motion-wake, Wi-Fi-keep-awake, config
+     * server, tap feedback) — see [DeviceSettingsState]. */
+    val deviceSettings: DeviceSettingsState = DeviceSettingsState(),
     /** Live connection state of the direct Harmony hub link — for a status
      * indicator on the settings page (HA's own state is on ctx.client.connection). */
     val harmonyConnected: Boolean = false,
@@ -86,7 +116,17 @@ class CardContext(
     /** Resolved theme colors for this dashboard. Cards read from here instead
      * of hardcoded Color literals. Defaults to the original palette so cards
      * render correctly even without a provider (e.g. in previews/tests). */
-    val theme: ThemeColors = com.custom.astrion.ui.ThemeColors.Default
+    val theme: ThemeColors = com.custom.astrion.ui.ThemeColors.Default,
+    /** False while the device's screen is off. This is a HOME launcher
+     * activity, so it's never stopped just because the screen turns off (see
+     * MainActivity's motion-wake) — Compose keeps recomposing and running
+     * LaunchedEffects regardless. Cards that do continuous background work
+     * while composed (e.g. CameraCard's live MJPEG stream / snapshot
+     * polling) should key off this and pause that work while it's false,
+     * rather than silently burning CPU and radio all night on whatever page
+     * was showing when the screen last timed out. Defaults to true so
+     * existing cards/tests that don't pass this keep working as before. */
+    val screenOn: Boolean = true
 )
 
 /**

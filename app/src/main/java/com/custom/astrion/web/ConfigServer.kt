@@ -3,6 +3,10 @@ package com.custom.astrion.web
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.MediaPlayer
+import android.media.RingtoneManager
 import android.os.BatteryManager
 import android.os.Environment
 import android.os.Handler
@@ -15,6 +19,7 @@ import com.custom.astrion.R
 import com.custom.astrion.config.ActivityRuntime
 import com.custom.astrion.config.DashboardLoader
 import com.custom.astrion.config.HarmonyHubConfig
+import com.custom.astrion.config.IrDatabaseRuntime
 import com.custom.astrion.config.RemoteSettings
 import com.custom.astrion.ha.ConnectionState
 import com.custom.astrion.ha.HaClient
@@ -29,6 +34,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -40,19 +46,37 @@ import org.json.JSONObject
  * same network configure this device without adb — the same pattern the
  * official panel firmware uses for its own local config page. Serves:
  *
- *  GET  /                connection form, dashboard.json / icon upload, updates
- *  GET  /builder          redirects to /builder/
- *  GET  /builder/          the dashboard editor UI (bundled from assets/docs/),
- *                        same tool as the GitHub Pages one, served locally
- *  POST /save-connection save HA_URL / HA_TOKEN / Harmony hub list,
- *                        then restarts the activity to reconnect with them
+ *  GET  /                the Devices page (bundled from assets/docs/devices.html):
+ *                        Home Assistant, Harmony Hub(s), IR Devices — "+ Add
+ *                        device", Home-Assistant-integrations style. Every
+ *                        device is configured exactly once here; the dashboard
+ *                        builder below only references them by name.
+ *  GET  /builder         redirects to /builder/
+ *  GET  /builder/        the dashboard/card editor UI (bundled from
+ *                        assets/docs/index.html) — layout, cards, hotkeys,
+ *                        Activities, theme. Has no device-editing UI of its
+ *                        own; only exists served from this device, no
+ *                        offline/standalone mode.
+ *  GET  /<file>          any other file under assets/docs/ (styles.css,
+ *                        every file under js/, images) served straight from
+ *                        the root — shared by both / (devices.html) and
+ *                        /builder/ (index.html, via /builder/<file>)
+ *  POST /save-connection save HA_URL / HA_TOKEN / Harmony hub list — always
+ *                        posted as a whole (see parseHubRows), so any single
+ *                        device's form on / must resend every hub, not just
+ *                        the one it's editing — then restarts the activity to
+ *                        reconnect with them
  *  GET  /harmony-config  fetch a paired hub's devices/commands/activities as JSON
  *                        (?hub=<localId>, defaults to the first configured hub).
  *                        Cached to astrion/harmony_<hubId>.json next to
  *                        dashboard.json on every successful fetch, and served
  *                        from that cache if the hub is temporarily unreachable.
- *  GET  /harmony-hubs    list configured hubs (id + name), for the "Hub" dropdown
- *                        in the dashboard editor's hotkey form
+ *  GET  /harmony-hubs    list configured hubs (id + name only) — feeds the
+ *                        read-only "Hub" dropdown inside the dashboard
+ *                        builder's card/hotkey forms
+ *  GET  /devices-config  full read-back of everything /save-connection accepts
+ *                        (HA url/token/webhook + Harmony hubs incl. ip/hubId) —
+ *                        lets the Devices page (/) pre-fill a device's edit form
  *  GET  /harmony-discover resolve a hub's numeric hubId from its IP alone
  *                        (?ip=<address>) — used by the "Auto-detect ID" button
  *  GET  /camera-snapshot proxy a single still frame for a camera.* entity
@@ -63,8 +87,13 @@ import org.json.JSONObject
  *                        ({entity_id: {state, friendly_name, attributes}}) plus
  *                        a `connected` flag — lets the dashboard editor preview
  *                        render with live HA data instead of the static mocks
- *  GET  /dashboard.json  download the current dashboard.json (backup)
+ *  GET  /dashboard.json  download the current dashboard.json (backup) — also
+ *                        how the Devices page (/) reads the "irDevices" array,
+ *                        since IR devices are stored inside dashboard.json
  *  POST /dashboard.json  replace dashboard.json, then live-reload the dashboard
+ *                        — also how the Devices page (/) saves IR device
+ *                        add/edit/remove, re-posting the whole file with only
+ *                        "irDevices" changed
  *  POST /icons           upload a PNG into /sdcard/astrion/icons/
  *  GET  /icons-list       list every uploaded icon's filename, as JSON — feeds
  *                        the dashboard editor's icon picker
@@ -74,6 +103,11 @@ import org.json.JSONObject
  *                        device (/builder/)
  *  GET  /check-update     check this project's GitHub Releases for a newer build
  *  POST /install-update   download the newer APK and open the system installer
+ *  POST /install-beta-update  same as /install-update but against the rolling
+ *                        dev-latest pre-release instead — always installs
+ *                        whatever the tag currently points to, no separate
+ *                        check step (used by the beta toggle in the builder,
+ *                        docs/js/hotkeys.js's installBetaUpdate())
  *  GET  /pages            list this device's dashboard pages (id + name), in
  *                        pager order — lets a remote controller (e.g. the
  *                        Home Assistant "astrion" integration) discover what
@@ -113,6 +147,20 @@ import org.json.JSONObject
  *                        possible "stop" and never touches a different
  *                        room's hub. This is the piece a plain hardware
  *                        "turn everything off" button doesn't give you.
+ *  POST /ring              "find my remote": plays this device's own
+ *                        ringtone/alarm/notification sound on loop for a
+ *                        few seconds, at a chosen volume, so a misplaced
+ *                        tablet/remote can be located by ear — the same
+ *                        idea as a phone's "find my device" ring. Form
+ *                        fields, all optional: `volume` (1-100, percent of
+ *                        the alarm stream's max, default 80), `sound`
+ *                        (`ringtone` | `alarm` | `notification`, default
+ *                        `ringtone`), `duration` (seconds, 1-60, default
+ *                        15). Restores the device's original alarm volume
+ *                        once done. A second call replaces any ring already
+ *                        in progress rather than layering sounds.
+ *  POST /ring/stop         cancel an in-progress /ring immediately and
+ *                        restore the original alarm volume.
  *
  * Deliberately has no auth — this device is assumed to live on a trusted
  * home LAN, the same assumption Home Assistant itself makes for local
@@ -149,13 +197,29 @@ class ConfigServer(
     @Volatile
     private var lastResult: UpdateChecker.CheckResult? = null
 
+    // ---- ring ("find my remote") state ------------------------------------
+    // All three only ever touched from NanoHTTPD's request-handling threads
+    // and the single Handler callback that clears them, never concurrently
+    // with UI code, so no extra synchronization beyond @Volatile is needed.
+    @Volatile
+    private var ringMediaPlayer: MediaPlayer? = null
+
+    @Volatile
+    private var ringStopHandler: Handler? = null
+
+    @Volatile
+    private var ringOriginalAlarmVolume: Int? = null
+
     private val iconsDir: File
         get() = File(Environment.getExternalStorageDirectory(), "astrion/icons").apply { mkdirs() }
+
+    private val irDatabaseDir: File
+        get() = File(Environment.getExternalStorageDirectory(), "astrion/ir-database").apply { mkdirs() }
 
     override fun serve(session: IHTTPSession): Response = try {
         val method = session.method
         when (val uri = session.uri) {
-            "/" -> if (method == Method.GET) serveForm() else methodNotAllowed()
+            "/" -> if (method == Method.GET) serveRootDocsAsset("/") else methodNotAllowed()
             "/dashboard.json" ->
                 when (method) {
                     Method.GET -> serveDashboardJson()
@@ -166,6 +230,7 @@ class ConfigServer(
             "/builder" -> if (method == Method.GET) redirectBuilder() else methodNotAllowed()
             "/harmony-config" -> if (method == Method.GET) serveHarmonyConfig(session) else methodNotAllowed()
             "/harmony-hubs" -> if (method == Method.GET) serveHarmonyHubs() else methodNotAllowed()
+            "/devices-config" -> if (method == Method.GET) serveDevicesConfig() else methodNotAllowed()
             "/harmony-discover" -> if (method == Method.GET) serveHarmonyDiscover(session) else methodNotAllowed()
             "/camera-snapshot" -> if (method == Method.GET) serveCameraSnapshot(session) else methodNotAllowed()
             "/ha-states" -> if (method == Method.GET) serveHaStates() else methodNotAllowed()
@@ -173,7 +238,14 @@ class ConfigServer(
             "/check-update" -> if (method == Method.GET) handleCheckUpdate() else methodNotAllowed()
             "/save-connection" -> if (method == Method.POST) handleSaveConnection(session) else methodNotAllowed()
             "/icons" -> if (method == Method.POST) handleIconUpload(session) else methodNotAllowed()
+            "/ir-database" ->
+                when (method) {
+                    Method.GET -> serveIrDatabaseList()
+                    Method.POST -> handleIrDatabaseUpload(session)
+                    else -> methodNotAllowed()
+                }
             "/install-update" -> if (method == Method.POST) handleInstallUpdate() else methodNotAllowed()
+            "/install-beta-update" -> if (method == Method.POST) handleInstallBetaUpdate() else methodNotAllowed()
             "/pages" -> if (method == Method.GET) servePages() else methodNotAllowed()
             "/current-page" -> if (method == Method.GET) serveCurrentPage() else methodNotAllowed()
             "/version" -> if (method == Method.GET) serveVersion() else methodNotAllowed()
@@ -183,18 +255,23 @@ class ConfigServer(
             "/activities/active" -> if (method == Method.GET) serveActiveActivities() else methodNotAllowed()
             "/activities/start" -> if (method == Method.POST) handleStartActivity(session) else methodNotAllowed()
             "/activities/stop" -> if (method == Method.POST) handleStopActivity(session) else methodNotAllowed()
+            "/ring" -> if (method == Method.POST) handleRing(session) else methodNotAllowed()
+            "/ring/stop" -> if (method == Method.POST) handleStopRing() else methodNotAllowed()
             else ->
                 when {
                     uri.startsWith("/builder/") ->
-                        if (method == Method.GET) {
-                            serveBuilderAsset(
-                                uri
-                            )
-                        } else {
-                            methodNotAllowed()
-                        }
-
+                        if (method == Method.GET) serveBuilderAsset(uri) else methodNotAllowed()
                     uri.startsWith("/icons/") -> if (method == Method.GET) serveIcon(uri) else methodNotAllowed()
+                    uri.startsWith("/ir-database/") ->
+                        if (method == Method.GET) serveIrDatabaseFile(uri) else methodNotAllowed()
+                    // Any other GET falls through to a plain docs/ asset lookup —
+                    // styles.css, every file under js/, images (the hero logo,
+                    // favicons, future additions to assets/docs/...) all "just
+                    // work" from the root without needing a route added per
+                    // file, same as /builder/ already does for the dashboard
+                    // editor's own assets. serveDocsAsset 404s cleanly if the
+                    // file really doesn't exist.
+                    method == Method.GET -> serveRootDocsAsset(uri)
                     else ->
                         newFixedLengthResponse(
                             Response.Status.NOT_FOUND,
@@ -212,6 +289,15 @@ class ConfigServer(
         )
     }
 
+    /** Also cleans up any in-progress /ring (and restores its volume change)
+     * when the server itself is torn down, e.g. by reconnectWithNewSettings —
+     * otherwise a ring started just before a settings save would keep
+     * looping with no way left to reach /ring/stop. */
+    override fun stop() {
+        stopRingInternal()
+        super.stop()
+    }
+
     private fun methodNotAllowed(): Response = newFixedLengthResponse(
         Response.Status.METHOD_NOT_ALLOWED,
         "text/plain",
@@ -219,367 +305,6 @@ class ConfigServer(
     )
 
     // ---- pages --------------------------------------------------------------
-
-    private fun serveForm(): Response {
-        val haUrl = RemoteSettings.haUrl(context)
-        val haToken = RemoteSettings.haToken(context)
-        val hubs = RemoteSettings.harmonyHubs(context)
-        val haConfigured = haUrl.isNotBlank() && haToken.isNotBlank()
-        val update = (lastResult as? UpdateChecker.CheckResult.Available)?.info
-
-        val updateBadgeHtml =
-            if (update != null) {
-                """
-                <form method="post" action="/install-update" class="status-right">
-                  <button type="submit" class="badge badge-warn" title="${
-                    escape(
-                        context.getString(R.string.web_config_install_update_button)
-                    )
-                }">
-                    <span class="dot dot-warn"></span>${
-                    context.getString(
-                        R.string.web_config_update_found,
-                        update.version
-                    )
-                }
-                  </button>
-                </form>
-                """.trimIndent()
-            } else {
-                """
-                <a class="badge status-right" href="/check-update" title="${
-                    escape(
-                        context.getString(R.string.web_config_check_update_link)
-                    )
-                }">
-                  <span class="dot dot-off"></span>v${BuildConfig.VERSION_NAME}
-                </a>
-                """.trimIndent()
-            }
-
-        val html =
-            """
-            <!doctype html><html><head><meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>${context.getString(R.string.web_config_title)}</title>
-            <link rel="preconnect" href="https://fonts.googleapis.com">
-            <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-            <style>
-              :root{
-                --bg:#0A1517; --surface:#101F24; --raised:#16282E; --line:#1F2E33;
-                --text:#E7EEEF; --muted:#7E97A0;
-                --cyan:#4FD1E0; --cyan-dim:#1B3438;
-                --amber:#F0A959; --amber-dim:#3A2A18;
-                --danger:#E5837E; --ok:#6EE7B7; --off:#445056;
-              }
-              *{box-sizing:border-box}
-              body{
-                font-family:'IBM Plex Mono',ui-monospace,monospace;
-                background:var(--bg); color:var(--text);
-                max-width:900px; margin:0 auto; padding:28px 18px 56px;
-                -webkit-font-smoothing:antialiased;
-              }
-              .eyebrow{
-                font-size:11px; letter-spacing:.14em; text-transform:uppercase;
-                color:var(--cyan); font-weight:500;
-              }
-              h1{
-                font-family:'Space Grotesk',sans-serif; font-size:26px; font-weight:700;
-                margin:4px 0 18px; letter-spacing:-.01em;
-              }
-              h2{
-                font-family:'Space Grotesk',sans-serif; font-size:15px; font-weight:700;
-                margin:0; display:flex; align-items:center; gap:8px;
-              }
-              .icon{width:18px;height:18px;flex:none}
-              label{display:block;margin-top:14px;font-size:12px;color:var(--muted);letter-spacing:.02em}
-              input[type=text],input[type=password]{
-                width:100%; box-sizing:border-box; padding:9px 10px; margin-top:5px;
-                background:var(--bg); border:1px solid var(--line); color:var(--text);
-                border-radius:7px; font-family:inherit; font-size:13px;
-              }
-              input:focus{outline:2px solid var(--cyan); outline-offset:1px; border-color:transparent}
-              .btn{
-                margin-top:16px; padding:10px 16px; border:none; border-radius:7px;
-                font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:13px;
-                cursor:pointer;
-              }
-              .btn-cyan{background:var(--cyan); color:#04191c}
-              .btn-amber{background:var(--amber); color:#241505}
-              .btn-ghost{background:var(--raised); color:var(--text); border:1px solid var(--line)}
-              .btn-block{width:100%; text-align:center; display:block; text-decoration:none}
-              .note{font-size:11.5px; color:var(--muted); margin-top:6px; line-height:1.5}
-              a{color:var(--cyan)}
-              .panel{
-                background:var(--surface); border:1px solid var(--line); border-radius:12px;
-                padding:18px 18px 20px; margin-top:22px; border-left:3px solid var(--accent,var(--line));
-              }
-              .panel-connection{--accent:var(--cyan)}
-              .panel-editor{--accent:var(--amber)}
-              .panel h2{color:var(--accent,var(--text))}
-              .panel-sub{font-size:12px;color:var(--muted);margin:4px 0 0}
-              .status-strip{display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin:14px 0 4px}
-              .status-left{display:flex; gap:8px; flex-wrap:wrap}
-              .status-right{margin:0}
-              .badge{
-                display:inline-flex; align-items:center; gap:6px; font-size:11px;
-                padding:6px 10px; border-radius:999px; background:var(--raised); border:1px solid var(--line);
-                font-family:inherit; text-decoration:none; color:var(--text); cursor:default;
-              }
-              a.badge,button.badge{cursor:pointer}
-              .badge-warn{background:var(--amber-dim); border-color:var(--amber); color:var(--amber)}
-              .dot{width:7px;height:7px;border-radius:50%;flex:none}
-              .dot-ok{background:var(--ok)} .dot-off{background:var(--off)} .dot-warn{background:var(--amber)}
-              .panels-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start}
-              @media (max-width:700px){ .panels-grid{grid-template-columns:1fr} }
-              .panels-grid .panel{margin-top:0}
-              .divider{height:1px; background:var(--line); margin:20px 0}
-              .hub-row{border:1px solid var(--line);border-radius:9px;padding:12px;margin-top:12px;background:var(--raised)}
-              .hub-row .hub-actions{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
-              .hub-row .hub-actions a{font-size:11.5px}
-              .hub-remove{background:none;border:none;color:var(--danger);font-size:11.5px;margin:0;padding:0;cursor:pointer;font-family:inherit}
-              .hub-add{background:transparent;color:var(--cyan);border:1px dashed var(--cyan);width:100%}
-              .hub-discover-btn{background:var(--surface);color:var(--cyan);border:1px solid var(--line)}
-              .hub-config-result{white-space:pre-wrap;font-size:10.5px;background:var(--bg);border:1px solid var(--line);
-                border-radius:6px;padding:8px;margin-top:6px;max-height:200px;overflow:auto;display:none}
-            </style></head><body>
-
-            <div class="eyebrow">ASTRION · LOCAL CONFIG</div>
-            <h1>${context.getString(R.string.web_config_title)}</h1>
-            <div class="status-strip">
-              <div class="status-left">
-                <span class="badge"><span class="dot ${if (haConfigured) "dot-ok" else "dot-off"}"></span>${
-                context.getString(
-                    R.string.web_config_ha_heading
-                )
-            }${if (haConfigured) "" else " — " + context.getString(R.string.web_config_status_not_set)}</span>
-                <span class="badge"><span class="dot ${if (hubs.isNotEmpty()) "dot-ok" else "dot-off"}"></span>${hubs.size} ${
-                context.getString(
-                    if (hubs.size == 1) R.string.web_config_status_hub_singular else R.string.web_config_status_hub_plural
-                )
-            }</span>
-              </div>
-              $updateBadgeHtml
-            </div>
-
-            <div class="panels-grid">
-            <div class="panel panel-connection">
-              <h2>${svgWifi()}${context.getString(R.string.web_config_ha_heading)}</h2>
-              <form method="post" action="/save-connection" id="connection-form">
-                <label>${context.getString(R.string.web_config_ha_url_label)}</label>
-                <input type="text" name="ha_url" value="${escape(haUrl)}" placeholder="http://192.168.1.50:8123">
-                <label>${context.getString(R.string.web_config_ha_token_label)}</label>
-                <input type="password" name="ha_token" value="${escape(haToken)}">
-
-                <div class="divider"></div>
-
-                <h2>${svgRemote()}${context.getString(R.string.web_config_harmony_heading)}</h2>
-                <div id="harmony-hubs">
-                  ${hubs.joinToString("") { hubRowHtml(it) }}
-                </div>
-                <button type="button" class="btn hub-add" onclick="addHubRow()">${
-                context.getString(
-                    R.string.web_config_harmony_add_button
-                )
-            }</button>
-
-                <button type="submit" class="btn btn-cyan">${context.getString(R.string.web_config_save_button)}</button>
-                <div class="note">${context.getString(R.string.web_config_save_note)}</div>
-              </form>
-            </div>
-
-            <div class="panel panel-editor">
-              <h2>${svgWand()}${context.getString(R.string.web_config_dashboard_heading)}</h2>
-              <p class="panel-sub">${context.getString(R.string.web_config_dashboard_sub)}</p>
-              <a class="btn btn-amber btn-block" href="/builder/">${context.getString(R.string.web_config_dashboard_builder_link)}</a>
-
-              <div class="divider"></div>
-
-              <a class="btn btn-ghost" href="/dashboard.json">${svgDownload()} ${
-                context.getString(
-                    R.string.web_config_dashboard_download
-                )
-            }</a>
-
-              <label>${svgUpload()} ${context.getString(R.string.web_config_dashboard_upload_button)}</label>
-              <form method="post" action="/dashboard.json" enctype="multipart/form-data">
-                <input type="file" name="file" accept=".json">
-                <button type="submit" class="btn btn-ghost">${context.getString(R.string.web_config_dashboard_upload_button)}</button>
-              </form>
-
-              <div class="divider"></div>
-
-              <label>${svgImage()} ${context.getString(R.string.web_config_icons_heading)}</label>
-              <form method="post" action="/icons" enctype="multipart/form-data">
-                <input type="file" name="file" accept="image/png">
-                <button type="submit" class="btn btn-ghost">${context.getString(R.string.web_config_icons_upload_button)}</button>
-              </form>
-              <p class="note">${context.getString(R.string.web_config_icons_note)}</p>
-            </div>
-            </div>
-
-            <template id="hub-row-template">${
-                hubRowHtml(
-                    HarmonyHubConfig(
-                        "",
-                        "",
-                        "",
-                        ""
-                    )
-                )
-            }</template>
-            <script>
-              function addHubRow() {
-                const tpl = document.getElementById('hub-row-template').innerHTML;
-                const div = document.createElement('div');
-                div.innerHTML = tpl;
-                document.getElementById('harmony-hubs').appendChild(div.firstElementChild);
-              }
-              function removeHubRow(btn) {
-                btn.closest('.hub-row').remove();
-              }
-              function fetchHubConfig(btn, localId) {
-                const out = btn.closest('.hub-row').querySelector('.hub-config-result');
-                out.style.display = 'block';
-                out.textContent = '${jsEscape(context.getString(R.string.web_config_harmony_fetching))}';
-                fetch('/harmony-config?hub=' + encodeURIComponent(localId))
-                  .then(r => r.json())
-                  .then(data => { out.textContent = JSON.stringify(data, null, 2); })
-                  .catch(e => { out.textContent = 'Error: ' + e; });
-              }
-              /** Shared discovery logic. `silent` suppresses the alert on failure —
-                  used for the automatic on-blur trigger, which shouldn't nag the
-                  user before they've even finished typing the IP. */
-              function runDiscoverHubId(row, silent) {
-                const ipInput = row.querySelector('input[name="hub_ip[]"]');
-                const idInput = row.querySelector('input[name="hub_hubid[]"]');
-                const btn = row.querySelector('.hub-discover-btn');
-                const ip = ipInput.value.trim();
-                if (!ip) {
-                  if (!silent) alert('${jsEscape(context.getString(R.string.web_config_harmony_discover_need_ip))}');
-                  return;
-                }
-                const originalText = btn.textContent;
-                btn.textContent = '${jsEscape(context.getString(R.string.web_config_harmony_fetching))}';
-                btn.disabled = true;
-                fetch('/harmony-discover?ip=' + encodeURIComponent(ip))
-                  .then(r => r.json())
-                  .then(data => {
-                    if (data.hubId) { idInput.value = data.hubId; }
-                    else if (!silent) { alert(data.error || '${
-                jsEscape(
-                    context.getString(R.string.web_config_harmony_discover_failed)
-                )
-            }'); }
-                  })
-                  .catch(e => { if (!silent) alert('${jsEscape(context.getString(R.string.web_config_harmony_discover_failed))}: ' + e); })
-                  .finally(() => { btn.textContent = originalText; btn.disabled = false; });
-              }
-              function discoverHubId(btn) {
-                runDiscoverHubId(btn.closest('.hub-row'), false);
-              }
-              /** Auto-triggered when the IP field loses focus — only if the ID
-                  field is still empty, so it never overwrites a value someone
-                  entered or fetched manually. Silent: a failed guess here (e.g.
-                  because the IP isn't reachable yet) shouldn't pop an alert while
-                  the form is still being filled in — the "Auto-detect ID" button
-                  stays available for a manual retry with a visible error. */
-              function onHubIpBlur(ipInput) {
-                const row = ipInput.closest('.hub-row');
-                const idInput = row.querySelector('input[name="hub_hubid[]"]');
-                if (idInput.value.trim()) return;
-                runDiscoverHubId(row, true);
-              }
-            </script>
-
-            </body></html>
-            """.trimIndent()
-        return newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", html)
-    }
-
-    // ---- inline icons (no external requests — this page must work with zero
-    // internet access beyond the optional Google Fonts, which degrade gracefully) --
-
-    private fun svgWifi() =
-        """<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 8.5a17 17 0 0 1 20 0"/><path d="M5.5 12.5a12 12 0 0 1 13 0"/><path d="M9 16.5a7 7 0 0 1 6 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>"""
-
-    private fun svgRemote() =
-        """<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="3"/><circle cx="12" cy="7" r="1.4" fill="currentColor" stroke="none"/><path d="M9.5 12h5M9.5 15.5h5M9.5 19h2"/></svg>"""
-
-    private fun svgWand() =
-        """<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20 16 8"/><path d="M14.5 9.5 18 6"/><path d="M19 4v2M22 5h-2M4 3v2M3 4h2M19.5 15v2M20.5 16h-2"/></svg>"""
-
-    private fun svgDownload() =
-        """<svg class="icon" style="width:13px;height:13px;vertical-align:-2px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M4 20h16"/></svg>"""
-
-    private fun svgUpload() =
-        """<svg class="icon" style="width:13px;height:13px;vertical-align:-2px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V8M7 13l5-5 5 5M4 4h16"/></svg>"""
-
-    private fun svgImage() =
-        """<svg class="icon" style="width:13px;height:13px;vertical-align:-2px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.4" fill="currentColor" stroke="none"/><path d="m4 17 5-5 4 4 3-3 4 4"/></svg>"""
-
-    /** One repeatable hub row — also used (with blank values) as the JS `+` template. */
-    private fun hubRowHtml(hub: HarmonyHubConfig): String {
-        val fetchLink =
-            if (hub.localId.isNotBlank()) {
-                """<a href="#" onclick="fetchHubConfig(this, '${
-                    escape(
-                        hub.localId
-                    )
-                }'); return false;">${context.getString(R.string.web_config_harmony_fetch_link)}</a>"""
-            } else {
-                "" // unsaved row — nothing to fetch yet, hub doesn't exist on the backend until Save is pressed
-            }
-        return """
-                                                                                                                                                <div class="hub-row">
-                                                                                                                                                  <input type="hidden" name="hub_localid[]" value="${
-            escape(
-                hub.localId
-            )
-        }">
-                                                                                                                                                  <label>${context.getString(
-            R.string.web_config_harmony_name_label
-        )}</label>
-                                                                                                                                                  <input type="text" name="hub_name[]" value="${
-            escape(
-                hub.name
-            )
-        }" placeholder="Salon">
-                                                                                                                                                  <label>${context.getString(
-            R.string.web_config_harmony_ip_label
-        )}</label>
-                                                                                                                                                  <input type="text" name="hub_ip[]" value="${
-            escape(
-                hub.ip
-            )
-        }" placeholder="192.168.1.50" onblur="onHubIpBlur(this)">
-                                                                                                                                                  <label>${context.getString(
-            R.string.web_config_harmony_id_label
-        )}</label>
-                                                                                                                                                  <div style="display:flex;gap:6px;align-items:center">
-                                                                                                                                                    <input type="text" name="hub_hubid[]" value="${
-            escape(
-                hub.hubId
-            )
-        }" style="flex:1">
-                                                                                                                                                    <button type="button" class="hub-discover-btn" style="margin-top:0;padding:8px 10px;white-space:nowrap;border-radius:7px;font-family:inherit;font-size:12px;cursor:pointer" onclick="discoverHubId(this)">${
-            context.getString(
-                R.string.web_config_harmony_discover_button
-            )
-        }</button>
-                                                                                                                                                  </div>
-                                                                                                                                                  <div class="hub-actions">
-                                                                                                                                                    $fetchLink
-                                                                                                                                                    <button type="button" class="hub-remove" onclick="removeHubRow(this)">${
-            context.getString(
-                R.string.web_config_harmony_remove_button
-            )
-        }</button>
-                                                                                                                                                  </div>
-                                                                                                                                                  <div class="hub-config-result"></div>
-                                                                                                                                                </div>
-        """.trimIndent()
-    }
 
     private fun serveDashboardJson(): Response {
         val file = DashboardLoader.configFile
@@ -594,14 +319,31 @@ class ConfigServer(
     }
 
     /**
-     * Serves the dashboard builder (the same tool published on GitHub Pages
-     * as docs/index.html) straight from this device's own local web server,
-     * bundled as assets/docs/ — so building a dashboard.json doesn't require
-     * a separate computer or internet access, just this device's own IP.
-     * `/builder` -> assets/docs/index.html, `/builder/js/x.js` -> assets/docs/js/x.js, etc.
+     * Serves the dashboard/card builder straight from this device's own local
+     * web server, bundled as assets/docs/ — so building a dashboard.json
+     * doesn't require a separate computer or internet access, just this
+     * device's own IP. No standalone/offline mode: this only ever runs
+     * served from here. `/builder` -> assets/docs/index.html,
+     * `/builder/js/x.js` -> assets/docs/js/x.js, etc.
      */
     private fun serveBuilderAsset(uri: String): Response {
         val relativePath = uri.removePrefix("/builder/").ifBlank { "index.html" }
+        return serveDocsAsset(relativePath)
+    }
+
+    /** Root-level counterpart to [serveBuilderAsset]: serves the *devices*
+     * page (assets/docs/devices.html, plus every file under its js/ folder,
+     * and styles.css) at
+     * the server root, so opening the device's own IP lands on "add a
+     * device" first — /builder/ stays the dashboard/card editor, one level
+     * down, exactly like clicking into a device from Home Assistant's
+     * Settings screen doesn't also hand you the dashboard editor. */
+    private fun serveRootDocsAsset(uri: String): Response {
+        val relativePath = uri.removePrefix("/").ifBlank { "devices.html" }
+        return serveDocsAsset(relativePath)
+    }
+
+    private fun serveDocsAsset(relativePath: String): Response {
         if (relativePath.contains("..")) {
             return newFixedLengthResponse(Response.Status.FORBIDDEN, "text/plain", "Forbidden")
         }
@@ -628,12 +370,17 @@ class ConfigServer(
                 "ico" -> "image/x-icon"
                 else -> "application/octet-stream"
             }
-        return newFixedLengthResponse(
-            Response.Status.OK,
-            mime,
-            bytes.inputStream(),
-            bytes.size.toLong()
-        )
+        val response =
+            newFixedLengthResponse(
+                Response.Status.OK,
+                mime,
+                bytes.inputStream(),
+                bytes.size.toLong()
+            )
+        response.addHeader("Cache-Control", "no-cache, no-store, must-revalidate")
+        response.addHeader("Pragma", "no-cache")
+        response.addHeader("Expires", "0")
+        return response
     }
 
     /** 302 redirect — used to send /builder to /builder/ so index.html's
@@ -662,6 +409,44 @@ class ConfigServer(
                         }
                     )
                 }
+            }
+        return newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
+    }
+
+    /**
+     * Everything the Devices page (/, docs/js/devices-page.js) needs to
+     * pre-fill its Home Assistant + Harmony Hub forms for *editing* — unlike
+     * [serveHarmonyHubs] above (deliberately id+name only, for pickers), this
+     * includes the HA token and each hub's ip/hubId. Same trust level as
+     * /save-connection, which already accepts these back: local-only server,
+     * same device, same secret either way.
+     */
+    private fun serveDevicesConfig(): Response {
+        val json =
+            JSONObject().apply {
+                put(
+                    "ha",
+                    JSONObject().apply {
+                        put("url", RemoteSettings.haUrl(context))
+                        put("token", RemoteSettings.haToken(context))
+                        put("webhookId", RemoteSettings.haWebhookId(context))
+                    }
+                )
+                put(
+                    "harmonyHubs",
+                    JSONArray().apply {
+                        RemoteSettings.harmonyHubs(context).forEach { hub ->
+                            put(
+                                JSONObject().apply {
+                                    put("localId", hub.localId)
+                                    put("name", hub.name)
+                                    put("ip", hub.ip)
+                                    put("hubId", hub.hubId)
+                                }
+                            )
+                        }
+                    }
+                )
             }
         return newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
     }
@@ -1135,8 +920,8 @@ class ConfigServer(
      *       "friendly_name": "X", "attributes": { ... } }, ... } }
      *
      * `connected` reflects the WebSocket state at call time; the editor falls
-     * back to the mocks when it's false (or when this endpoint isn't reachable,
-     * e.g. the GitHub Pages copy of the editor). Attributes are passed through
+     * back to the mocks when it's false (or before this endpoint has answered
+     * yet on first load). Attributes are passed through
      * verbatim (the same kotlinx JsonObject the cards read), so each card's
      * preview can pull whatever domain-specific fields it needs.
      */
@@ -1176,7 +961,8 @@ class ConfigServer(
         RemoteSettings.saveHaConnection(
             context = context,
             haUrl = params["ha_url"]?.firstOrNull().orEmpty().trim(),
-            haToken = params["ha_token"]?.firstOrNull().orEmpty().trim()
+            haToken = params["ha_token"]?.firstOrNull().orEmpty().trim(),
+            haWebhookId = params["ha_webhook_id"]?.firstOrNull().orEmpty().trim()
         )
         RemoteSettings.saveHarmonyHubs(context, parseHubRows(params))
         Handler(Looper.getMainLooper()).postDelayed({ onConnectionSaved() }, 500L)
@@ -1242,12 +1028,119 @@ class ConfigServer(
     }
 
     /**
+     * Saves one curated ir-database category file (as produced by the
+     * ir-database picker — a separate, externally-hosted static site, not
+     * part of this app) straight to `/sdcard/astrion/ir-database/`,
+     * creating that folder on first use. IrDatabaseRuntime.kt picks up the
+     * change on the very next command send, no restart needed.
+     *
+     * Two callers, two response shapes needed on success — same endpoint
+     * either way, since it's the same operation either way:
+     *  - This device's own config page (`web_config_ir_database_upload_button`
+     *    above): a plain browser `<form>` POST, wants the usual
+     *    redirect-with-a-flash-message every other upload form on this
+     *    page gets (see handleIconUpload).
+     *  - The picker's own "Send to my remote" button: a cross-origin
+     *    `fetch()` call (blocked by most browsers' mixed-content policy
+     *    today, since this page is plain HTTP — see the picker's own
+     *    comments), which sends `Accept: application/json` and wants a
+     *    real JSON response body to show a status message from, not an
+     *    HTML redirect it would just silently follow.
+     * Picked apart into [validateIrDatabaseUpload] so this function itself
+     * stays a short, flat happy-path plus the one on-success branch.
+     */
+    private fun handleIrDatabaseUpload(session: IHTTPSession): Response {
+        val wantsJson = session.headers["accept"]?.contains("application/json") == true
+        val (tmpPath, target) = validateIrDatabaseUpload(session) ?: return irDatabaseError(
+            Response.Status.BAD_REQUEST,
+            "Expected a single .json ir-database category file (with \"category\"+\"brands\" keys)"
+        )
+
+        File(tmpPath).copyTo(File(irDatabaseDir, target), overwrite = true)
+        IrDatabaseRuntime.invalidate()
+
+        return if (wantsJson) {
+            jsonResponse(
+                Response.Status.OK,
+                buildJsonObject {
+                    put("status", "ok")
+                    put("file", target)
+                }
+            )
+        } else {
+            redirectHome(context.getString(R.string.web_config_ir_database_uploaded))
+        }
+    }
+
+    /** Null means invalid — caller responds with one generic error either
+     * way, so there's no need to thread a specific reason back out here. */
+    private fun validateIrDatabaseUpload(session: IHTTPSession): Pair<String, String>? {
+        val files = HashMap<String, String>()
+        session.parseBody(files)
+        val tmpPath = files["file"] ?: return null
+        val originalName = session.parameters["file"]?.firstOrNull() ?: return null
+        if (!originalName.endsWith(".json", ignoreCase = true)) return null
+        val parsed = runCatching { Json.parseToJsonElement(File(tmpPath).readText()).jsonObject }.getOrNull()
+        if (parsed?.containsKey("category") != true || !parsed.containsKey("brands")) return null
+        // Lowercased on write so files landing here stay consistent with
+        // the category ids elsewhere (the picker itself already does
+        // this) — IrDatabaseRuntime's own lookup is case-insensitive
+        // regardless, for files that arrive some other way (manual copy).
+        return tmpPath to sanitize(originalName).lowercase()
+    }
+
+    private fun jsonResponse(status: Response.Status, body: JsonObject): Response =
+        newFixedLengthResponse(status, "application/json", body.toString())
+            .apply { addHeader("Access-Control-Allow-Origin", "*") }
+
+    private fun irDatabaseError(status: Response.Status, message: String): Response =
+        jsonResponse(status, buildJsonObject { put("error", message) })
+
+    /**
+     * Lists the category ids actually present in [irDatabaseDir] — e.g.
+     * `["ac","tv"]` for a folder containing `ac.json` and `TV.json` (case
+     * doesn't matter, see [IrDatabaseRuntime]'s own lookup). Feeds the
+     * dashboard builder's "Reference the ir-database" device form
+     * (`docs/js/ir.js`): when this device actually has some files copied
+     * over already, the builder can offer them directly instead of asking
+     * for category/brand/model to be typed by hand. Only meaningful when
+     * the builder is opened from this device (`/builder/`) — same
+     * same-origin-only reasoning as `serveIconsList`.
+     */
+    private fun serveIrDatabaseList(): Response {
+        val ids =
+            irDatabaseDir
+                .listFiles()
+                ?.filter { it.isFile && it.name.endsWith(".json", ignoreCase = true) }
+                ?.map { it.name.removeSuffix(".json").removeSuffix(".JSON").lowercase() }
+                ?.sorted() ?: emptyList()
+        return newFixedLengthResponse(Response.Status.OK, "application/json", JSONArray(ids).toString())
+    }
+
+    /**
+     * Serves one category file straight out of [irDatabaseDir] — raw
+     * pass-through, same `{category, brands:[...]}` shape it was written
+     * in. The other half of `serveIrDatabaseList`: the builder fetches
+     * this once a category from that list is picked, to fill in
+     * brand/model (and, unlike the picker, know the *exact* command ids
+     * available — no more relying on hand-typed "known command ids" hints
+     * for a device that's already on this device's own sdcard).
+     */
+    private fun serveIrDatabaseFile(uri: String): Response {
+        val category = sanitize(uri.removePrefix("/ir-database/").removeSuffix(".json"))
+        val file =
+            irDatabaseDir.listFiles()?.firstOrNull { it.name.equals("$category.json", ignoreCase = true) }
+        if (category.isBlank() || file == null) {
+            return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not found: $category")
+        }
+        return newFixedLengthResponse(Response.Status.OK, "application/json", file.readText())
+    }
+
+    /**
      * Lists every icon previously uploaded to [iconsDir], as a JSON array of
      * bare filenames — feeds the dashboard builder's icon picker (`docs/js/
      * cards.js`'s `openIconPicker()`), which shows them as clickable
-     * thumbnails instead of making the person type a path by hand. Only
-     * meaningful when the builder is opened from this device (`/builder/`);
-     * the picker button hides itself if this call fails (e.g. GitHub Pages).
+     * thumbnails instead of making the person type a path by hand.
      */
     private fun serveIconsList(): Response {
         val names =
@@ -1296,8 +1189,16 @@ class ConfigServer(
         )
     }
 
+    /**
+     * Same beta-detection as SettingsMenu.kt's LaunchedEffect: a beta/debug
+     * build (`versionNameSuffix = "-beta"`, see build.gradle.kts) checks the
+     * rolling `dev-latest` pre-release here too, instead of always comparing
+     * against `/releases/latest` — otherwise this badge could never fire on
+     * a beta install either.
+     */
     private fun handleCheckUpdate(): Response {
-        val result = UpdateChecker.checkForUpdate()
+        val isBeta = BuildConfig.VERSION_NAME.contains("-beta")
+        val result = if (isBeta) UpdateChecker.checkBetaUpdate() else UpdateChecker.checkForUpdate()
         lastResult = result
         val message =
             when (result) {
@@ -1314,7 +1215,11 @@ class ConfigServer(
     }
 
     private fun handleInstallUpdate(): Response {
-        val result = lastResult ?: UpdateChecker.checkForUpdate()
+        val result =
+            lastResult ?: run {
+                val isBeta = BuildConfig.VERSION_NAME.contains("-beta")
+                if (isBeta) UpdateChecker.checkBetaUpdate() else UpdateChecker.checkForUpdate()
+            }
         val info =
             (result as? UpdateChecker.CheckResult.Available)?.info
                 ?: return redirectHome(
@@ -1362,6 +1267,179 @@ class ConfigServer(
         }
     }
 
+    /**
+     * Mirrors [handleInstallUpdate], but for the rolling `dev-latest`
+     * pre-release, and called via `fetch()` from docs/js/hotkeys.js's
+     * installBetaUpdate() rather than a `<form>` navigation — so this
+     * returns plain HTTP status + text instead of [redirectHome]'s
+     * meta-refresh HTML, which `fetch()` doesn't act on anyway and which
+     * always reports 200 OK even for a failure.
+     */
+    private fun handleInstallBetaUpdate(): Response {
+        val result = UpdateChecker.checkBetaUpdate()
+        val info =
+            (result as? UpdateChecker.CheckResult.Available)?.info
+                ?: return newFixedLengthResponse(
+                    Response.Status.INTERNAL_ERROR,
+                    "text/plain",
+                    when (result) {
+                        is UpdateChecker.CheckResult.Failed -> result.reason
+                        else -> "No beta build available"
+                    }
+                )
+
+        // Ask first instead of letting the installation intent fail: on Android 8+
+        // this permission is granted per-app in Settings, not at install time.
+        if (!context.packageManager.canRequestPackageInstalls()) {
+            val settingsIntent =
+                Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    "package:${context.packageName}".toUri()
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching { context.startActivity(settingsIntent) }
+            return newFixedLengthResponse(
+                Response.Status.FORBIDDEN,
+                "text/plain",
+                context.getString(R.string.web_config_update_needs_permission)
+            )
+        }
+
+        val file =
+            UpdateChecker.download(context, info.apkUrl)
+                ?: return newFixedLengthResponse(
+                    Response.Status.INTERNAL_ERROR,
+                    "text/plain",
+                    "Download failed"
+                )
+
+        return try {
+            UpdateChecker.promptInstall(context, file)
+            newFixedLengthResponse(Response.Status.OK, "text/plain", "Installing ${info.version}")
+        } catch (e: Exception) {
+            Log.e("ConfigServer", "beta install prompt failed", e)
+            newFixedLengthResponse(
+                Response.Status.INTERNAL_ERROR,
+                "text/plain",
+                "Could not open installer: ${e.message}"
+            )
+        }
+    }
+
+    // ---- ring ("find my remote") -------------------------------------------
+
+    private val ringSounds =
+        mapOf(
+            "ringtone" to RingtoneManager.TYPE_RINGTONE,
+            "alarm" to RingtoneManager.TYPE_ALARM,
+            "notification" to RingtoneManager.TYPE_NOTIFICATION
+        )
+
+    /**
+     * Plays this device's own ringtone/alarm/notification sound on loop at a
+     * chosen volume, so a misplaced tablet can be found by ear. Uses
+     * `AudioAttributes.USAGE_ALARM` (rather than nudging the whole device's
+     * media/ringer volume, which would be audible far beyond this one call
+     * and could be left changed if something goes wrong) so the sound plays
+     * at a level we fully control and cleanly restore afterwards, and so it
+     * has a decent chance of being heard even if the tablet is set to
+     * silent/DND for notifications.
+     */
+    private fun handleRing(session: IHTTPSession): Response {
+        val files = HashMap<String, String>()
+        session.parseBody(files)
+        val soundParam = session.parameters["sound"]?.firstOrNull()?.trim()?.lowercase() ?: "ringtone"
+        val ringtoneType =
+            ringSounds[soundParam]
+                ?: return newFixedLengthResponse(
+                    Response.Status.BAD_REQUEST,
+                    "application/json",
+                    """{"error":"unknown sound '$soundParam', expected one of ${ringSounds.keys}"}"""
+                )
+        val volume = (session.parameters["volume"]?.firstOrNull()?.trim()?.toIntOrNull() ?: 80).coerceIn(1, 100)
+        val durationSeconds =
+            (session.parameters["duration"]?.firstOrNull()?.trim()?.toIntOrNull() ?: 15).coerceIn(1, 60)
+
+        val ringtoneUri =
+            RingtoneManager.getActualDefaultRingtoneUri(context, ringtoneType)
+                ?: RingtoneManager.getValidRingtoneUri(context)
+                ?: return newFixedLengthResponse(
+                    Response.Status.INTERNAL_ERROR,
+                    "application/json",
+                    """{"error":"no ringtone available on this device"}"""
+                )
+
+        // A ring already in progress is replaced, not layered on top of.
+        stopRingInternal()
+
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val maxAlarmVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+        ringOriginalAlarmVolume = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+        val targetAlarmVolume = ((volume / 100f) * maxAlarmVolume).toInt().coerceIn(1, maxAlarmVolume)
+        runCatching { audioManager.setStreamVolume(AudioManager.STREAM_ALARM, targetAlarmVolume, 0) }
+
+        try {
+            ringMediaPlayer =
+                MediaPlayer().apply {
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                    isLooping = true
+                    setDataSource(context, ringtoneUri)
+                    prepare()
+                    start()
+                }
+        } catch (e: Exception) {
+            Log.e("ConfigServer", "ring: failed to start playback", e)
+            stopRingInternal()
+            return newFixedLengthResponse(
+                Response.Status.INTERNAL_ERROR,
+                "application/json",
+                """{"error":"could not play sound: ${e.message}"}"""
+            )
+        }
+
+        val handler = Handler(Looper.getMainLooper())
+        ringStopHandler = handler
+        handler.postDelayed({ stopRingInternal() }, durationSeconds * 1000L)
+
+        return newFixedLengthResponse(
+            Response.Status.OK,
+            "application/json",
+            """{"status":"ringing","sound":"$soundParam","volume":$volume,"duration":$durationSeconds}"""
+        )
+    }
+
+    private fun handleStopRing(): Response {
+        val wasRinging = ringMediaPlayer != null
+        stopRingInternal()
+        return newFixedLengthResponse(
+            Response.Status.OK,
+            "application/json",
+            """{"status":"stopped","was_ringing":$wasRinging}"""
+        )
+    }
+
+    /** Stops any in-progress /ring playback, cancels its scheduled auto-stop,
+     * and restores the alarm stream to whatever volume it was at before /ring
+     * changed it. Safe to call when nothing is ringing. */
+    private fun stopRingInternal() {
+        ringStopHandler?.removeCallbacksAndMessages(null)
+        ringStopHandler = null
+        ringMediaPlayer?.let { player ->
+            runCatching { player.stop() }
+            runCatching { player.release() }
+        }
+        ringMediaPlayer = null
+        ringOriginalAlarmVolume?.let { original ->
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            runCatching { audioManager.setStreamVolume(AudioManager.STREAM_ALARM, original, 0) }
+        }
+        ringOriginalAlarmVolume = null
+    }
+
     // ---- helpers --------------------------------------------------------------
 
     private fun redirectHome(message: String): Response {
@@ -1371,15 +1449,4 @@ class ConfigServer(
     }
 
     private fun sanitize(name: String) = name.substringAfterLast('/').replace(Regex("[^A-Za-z0-9._-]"), "_")
-
-    private fun escape(s: String) = s.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;")
-
-    /** Escapes a string for safe embedding inside a single-quoted JS string literal
-     * in the generated <script> block — needed for any translated string (which may
-     * contain apostrophes, e.g. French "d'abord") interpolated into inline JS. */
-    private fun jsEscape(s: String) = s
-        .replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace("\n", "\\n")
-        .replace("\r", "")
 }

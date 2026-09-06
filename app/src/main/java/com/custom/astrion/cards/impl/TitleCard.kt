@@ -1,9 +1,7 @@
 package com.custom.astrion.cards.impl
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,7 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -29,7 +27,8 @@ import com.custom.astrion.cards.CardConfig
 import com.custom.astrion.cards.CardContext
 import com.custom.astrion.cards.CardRenderer
 import com.custom.astrion.ha.ServiceCall
-import java.io.File
+import com.custom.astrion.ui.decodeIconSampled
+import com.custom.astrion.ui.tapClickable
 
 /**
  * Title card — a section header for grouping cards on a page, styled after
@@ -105,14 +104,10 @@ class TitleCard : CardRenderer {
             remember(config) {
                 config.string("color")?.let { parseHexColor(it) } ?: ctx.theme.primaryText
             }
+        val iconTargetPx = with(LocalDensity.current) { 22.dp.toPx() }.toInt()
         val iconBitmap =
-            remember(iconPath) {
-                iconPath?.let {
-                    runCatching {
-                        val f = File(it)
-                        if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
-                    }.getOrNull()
-                }
+            remember(iconPath, iconTargetPx) {
+                iconPath?.let { decodeIconSampled(it, iconTargetPx) }
             }
         // An icon or a divider forces the Bubble-Card-style left-aligned
         // "icon, label, line" row — see the class doc comment for why.
@@ -173,7 +168,7 @@ class TitleCard : CardRenderer {
                     modifier =
                     Modifier
                         .fillMaxWidth()
-                        .let { if (titleTappable) it.clickable { onTap("title") } else it },
+                        .let { if (titleTappable) it.tapClickable { onTap("title") } else it },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (iconBitmap != null) {
@@ -215,7 +210,7 @@ class TitleCard : CardRenderer {
                     Modifier
                         .fillMaxWidth()
                         .padding(top = if (!title.isNullOrBlank()) 2.dp else 0.dp)
-                        .let { if (subtitleTappable) it.clickable { onTap("subtitle") } else it }
+                        .let { if (subtitleTappable) it.tapClickable { onTap("subtitle") } else it }
                 )
             }
         }

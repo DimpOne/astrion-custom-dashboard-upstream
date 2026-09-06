@@ -1,7 +1,6 @@
 package com.custom.astrion.cards.impl
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +31,7 @@ import com.custom.astrion.ha.EntityState
 import com.custom.astrion.ha.HaClient
 import com.custom.astrion.ha.ServiceCall
 import com.custom.astrion.ui.ThemeColors
+import com.custom.astrion.ui.tapClickable
 import kotlin.math.roundToInt
 
 /**
@@ -140,7 +140,7 @@ fun CoverDetailDialog(
                         Modifier
                             .clip(RoundedCornerShape(12.dp))
                             .background(theme.controlBackground)
-                            .clickable { setPreset(pct) }
+                            .tapClickable { setPreset(pct) }
                             .padding(horizontal = 12.dp, vertical = 8.dp)
                     ) {
                         Text("$pct%", color = theme.iconTint, fontSize = 12.sp)

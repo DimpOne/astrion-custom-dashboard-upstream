@@ -1,7 +1,6 @@
 package com.custom.astrion.cards.impl
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +35,7 @@ import com.custom.astrion.ha.HaLabels
 import com.custom.astrion.ha.ServiceCall
 import com.custom.astrion.ui.ThemeColors
 import com.custom.astrion.ui.icons.MdiIcons
+import com.custom.astrion.ui.tapClickable
 
 /**
  * Climate / thermostat card renderer.
@@ -205,7 +205,7 @@ class ClimateCard : CardRenderer {
                         .size(36.dp)
                         .clip(CircleShape)
                         .background(if (isOff) ctx.theme.danger.copy(alpha = 0.25f) else ctx.theme.controlBackground)
-                        .clickable { turnOff() },
+                        .tapClickable { turnOff() },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -376,7 +376,7 @@ class ClimateCard : CardRenderer {
                 .size(46.dp)
                 .clip(CircleShape)
                 .background(theme.controlBackground)
-                .clickable(onClick = onClick),
+                .tapClickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
             Icon(icon, contentDescription = null, tint = theme.iconTint)
@@ -415,7 +415,7 @@ class ClimateCard : CardRenderer {
                 .height(34.dp)
                 .clip(RoundedCornerShape(10.dp))
                 .background(if (selected) theme.accentSecondary else theme.controlBackground)
-                .clickable(onClick = onClick),
+                .tapClickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
             val tint = if (selected) Color.White else theme.mutedText

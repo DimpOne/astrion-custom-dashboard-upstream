@@ -39,6 +39,7 @@ object RemoteSettings {
     private const val PREFS = "astrion_settings"
     private const val KEY_HA_URL = "ha_url"
     private const val KEY_HA_TOKEN = "ha_token"
+    private const val KEY_HA_WEBHOOK_ID = "ha_webhook_id"
     private const val KEY_HARMONY_HUBS = "harmony_hubs" // JSON array, see HarmonyHubConfig
 
     // Legacy single-hub keys (pre-multi-hub). Read once for migration, never written again.
@@ -53,14 +54,25 @@ object RemoteSettings {
 
     fun haToken(context: Context): String = prefs(context).getString(KEY_HA_TOKEN, "") ?: ""
 
+    /**
+     * Optional HA webhook id (just the id — `POST <ha_url>/api/webhook/<id>`),
+     * for instant push (current page, active Activity per room) instead of
+     * making the companion HA integration poll ConfigServer's /activities/active
+     * on a timer. Webhooks need no auth token (the id itself is the secret),
+     * so this is intentionally separate from [haToken]. Blank = push disabled;
+     * everything keeps working via polling either way.
+     */
+    fun haWebhookId(context: Context): String = prefs(context).getString(KEY_HA_WEBHOOK_ID, "") ?: ""
+
     /** True once a Home Assistant URL and token have been entered via the web configurator. */
     @Suppress("unused")
     fun isConfigured(context: Context): Boolean = haUrl(context).isNotBlank() && haToken(context).isNotBlank()
 
-    fun saveHaConnection(context: Context, haUrl: String, haToken: String) {
+    fun saveHaConnection(context: Context, haUrl: String, haToken: String, haWebhookId: String = "") {
         prefs(context).edit {
             putString(KEY_HA_URL, haUrl)
             putString(KEY_HA_TOKEN, haToken)
+            putString(KEY_HA_WEBHOOK_ID, haWebhookId)
         }
     }
 

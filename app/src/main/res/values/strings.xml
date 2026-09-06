@@ -16,9 +16,16 @@
     <string name="wake_on_motion">Wake on motion</string>
     <string name="config_server_toggle">Local config server</string>
     <string name="config_server_toggle_hint">Also turns off /builder/, icon uploads, and dashboard.json upload/download. Turn back on here to reconfigure.</string>
+    <string name="wifi_keep_awake">Keep Wi-Fi awake</string>
+    <string name="wifi_keep_awake_hint">Off by default. Fixes Home Assistant sometimes failing to reach this device (services, push) while the screen is off — costs some battery, since it stops the Wi-Fi radio from ever entering power-save.</string>
     <string name="config_server_off_hint">Local config server is off</string>
+    <string name="tap_feedback">Tap feedback</string>
+    <string name="tap_feedback_hint">Short tick sound when you tap a scene, button, or dot — matches the device\'s own Android menus.</string>
     <string name="brightness">Brightness</string>
     <string name="allow_brightness_write">Allow brightness control (tap)</string>
+    <string name="settings_update_available">Update available: v%1$s</string>
+    <string name="settings_beta_update_available">Beta available: %1$s</string>
+    <string name="settings_local_config">Local config: %1$s</string>
 
     <!-- Web Config: Header & General -->
     <string name="web_config_title">Astrion Custom — Local configuration</string>
@@ -33,6 +40,8 @@
     <string name="web_config_ha_heading">Home Assistant</string>
     <string name="web_config_ha_url_label">Home Assistant URL</string>
     <string name="web_config_ha_token_label">Home Assistant long-lived access token</string>
+    <string name="web_config_ha_webhook_label">Webhook ID (optional — instant push instead of polling)</string>
+    <string name="web_config_ha_webhook_hint">If your companion Home Assistant integration registers a webhook, paste its id here so Astrion can push the current page and active Activity the instant they change, instead of Home Assistant polling for them. Leave blank to keep polling only — everything still works either way.</string>
 
     <!-- Web Config: Harmony Hubs -->
     <string name="web_config_harmony_heading">Harmony Hubs</string>
@@ -61,6 +70,33 @@
     <string name="web_config_icons_note">Saved to /sdcard/astrion/icons/&lt;filename&gt; — reference it in dashboard.json as \"/sdcard/astrion/icons/&lt;filename&gt;\".</string>
     <string name="web_config_icon_uploaded">Icon uploaded</string>
 
+    <!-- Web Config: IR Database -->
+    <string name="web_config_ir_database_heading">IR devices</string>
+    <string name="web_config_ir_database_sub">Reference a device from the ir-database picker in the dashboard builder, or upload its curated files here so it works immediately.</string>
+    <string name="web_config_ir_database_picker_link">Pick your IR devices \u2192</string>
+    <string name="web_config_ir_database_upload_button">Upload ir-database file</string>
+    <string name="web_config_ir_database_note">Saved to /sdcard/astrion/ir-database/&lt;category&gt;.json — picked up immediately, no restart needed.</string>
+    <string name="web_config_ir_database_uploaded">ir-database file uploaded</string>
+
+    <!-- Charging screen -->
+    <string name="charging_screen_charging">Charging</string>
+    <string name="charging_screen_full">Charged</string>
+
+    <!-- Web Config: Find my remote (ring) -->
+    <string name="web_config_ring_heading">Find my remote</string>
+    <string name="web_config_ring_sub">Test the ring sound and volume right from here, before wiring it up in Home Assistant.</string>
+    <string name="web_config_ring_volume_label">Volume</string>
+    <string name="web_config_ring_sound_label">Sound</string>
+    <string name="web_config_ring_sound_ringtone">Ringtone</string>
+    <string name="web_config_ring_sound_alarm">Alarm</string>
+    <string name="web_config_ring_sound_notification">Notification</string>
+    <string name="web_config_ring_duration_label">Duration (seconds)</string>
+    <string name="web_config_ring_button">Ring</string>
+    <string name="web_config_ring_stop_button">Stop</string>
+    <string name="web_config_ring_status_ringing">Ringing…</string>
+    <string name="web_config_ring_status_stopped">Stopped</string>
+    <string name="web_config_ring_status_error">Could not ring:</string>
+
     <!-- Web Config: OTA / Updates -->
     <string name="web_config_updates_heading">Updates</string>
     <string name="web_config_current_version">Current version</string>
@@ -71,6 +107,37 @@
     <string name="web_config_update_installing">Installer launched — approve the install prompt on the panel screen</string>
     <string name="web_config_update_needs_permission">Allow "Install unknown apps" for this app on the screen that just opened, then tap Download &amp; install again.</string>
     <string name="web_config_update_failed">Update check failed: %1$s</string>
+
+    <!-- Connection status -->
+    <string name="connection_connecting">Connecting…</string>
+    <string name="connection_auth_failed">Auth failed — check token</string>
+    <string name="connection_error_retrying">Connection error — retrying</string>
+
+    <!-- Unknown card -->
+    <string name="unknown_card_type">Unknown card type: "%1$s"</string>
+
+    <!-- Media (player, Plex, browser) -->
+    <string name="media_loading">Loading…</string>
+    <string name="media_loading_more">Loading more…</string>
+    <string name="media_no_items">No items</string>
+    <string name="media_nothing_here">Nothing here</string>
+    <string name="media_default_title">Media</string>
+    <string name="media_load_timeout">Couldn\'t load media (timeout)</string>
+    <string name="media_load_failed">Couldn\'t load media</string>
+    <string name="media_browse">Browse</string>
+    <string name="media_power_toggle">Toggle</string>
+    <string name="plex_error_no_items">No items returned from Plex</string>
+    <string name="plex_error_generic">Plex error</string>
+    <string name="plex_library">Library</string>
+    <string name="plex_this_season">This season</string>
+    <string name="plex_play">Play</string>
+    <string name="plex_episode">E%1$s · %2$s</string>
+
+    <!-- Select cards -->
+    <string name="select_no_options">No options</string>
+    <string name="select_choose">Select…</string>
+    <string name="source_no_sources">No sources (device off?)</string>
+    <string name="source_choose">Select source…</string>
 
     <!-- ClimateCard -->
     <string name="climate_current_temp">Now %1$s°</string>
@@ -86,6 +153,8 @@
 
     <!-- VacuumCard -->
     <string name="vacuum_fan_speed_caption">Cleaning mode</string>
+    <string name="vacuum_default_name">Vacuum</string>
+    <string name="vacuum_map_label">Vacuum map</string>
 
     <!-- CoverCard -->
     <string name="cover_open">Open</string>

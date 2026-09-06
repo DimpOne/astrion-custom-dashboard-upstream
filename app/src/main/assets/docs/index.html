@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Astrion Custom — dashboard.json Editor</title>
-  <link rel="stylesheet" href="styles.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Astrion Custom — dashboard.json Editor</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
@@ -12,371 +12,346 @@
 <div class="subtitle">Build your dashboard visually, no hand-written JSON required. Matches the exact schema the app reads.</div>
 <div id="deviceModeBanner" class="note" style="display:none"></div>
 
+<div class="release-info-row" style="display:flex;align-items:center;gap:16px;margin-top:6px;flex-wrap:wrap;">
+    <span id="stableBadge"></span>
+    <label class="beta-switch">
+        <input type="checkbox" id="betaToggle" onchange="toggleBetaBadge()">
+        <span class="beta-slider"></span>
+    </label>
+    <span id="betaToggleLabel">Also the beta (dev)</span>
+    <span id="betaBadge" style="display:none"></span>
+</div>
+
 <div class="layout">
-  <!-- LEFT PANE -->
-  <div class="editor-pane">
+    <!-- LEFT PANE -->
+    <div class="editor-pane">
 
-    <h2>Load an existing dashboard.json (optional)</h2>
-    <div class="section-box">
-      <textarea id="importBox" rows="4" placeholder="Paste your current dashboard.json here to edit it, or leave empty to start fresh."></textarea>
-      <div class="btn-row">
-        <button onclick="importJson()">Load</button>
-        <button class="secondary" onclick="resetAll()">Start over</button>
-      </div>
-    </div>
-
-    <h2>1. Hotkeys</h2>
-    <div class="section-box">
-      <label>Scope</label>
-      <select id="hkScope">
-        <option value="page">This page only (overrides global while page is active)</option>
-        <option value="global">Global (every page)</option>
-      </select>
-
-      <label>Press type</label>
-      <select id="hkType">
-        <option value="hotkeys">Single press</option>
-        <option value="longHotkeys">Long press (~500ms hold)</option>
-      </select>
-
-      <label>Physical key</label>
-      <select id="hkKey">
-        <option>BACK</option><option>HOME</option><option>POWER</option>
-        <option>VOLUME_UP</option><option>VOLUME_DOWN</option><option>MUTE</option>
-        <option>PAGE_UP</option><option>PAGE_DOWN</option>
-        <option>UP</option><option>DOWN</option><option>LEFT</option><option>RIGHT</option><option>CENTER</option>
-        <option>VOICE</option><option>MAIN</option>
-        <option>REWIND</option><option>PLAY</option><option>STOP</option><option>FASTFORWARD</option>
-        <option>RED_BUTTON</option><option>GREEN_BUTTON</option><option>BLUE_BUTTON</option><option>YELLOW_BUTTON</option>
-      </select>
-
-      <label>Action</label>
-      <select id="hkAction" onchange="updateHotkeyActionInputs()">
-        <option value="page">Go to page</option>
-        <option value="openOverlay">Open overlay (Settings / Active Activities)</option>
-        <option value="openCurrentActivity">Return to current Activity (for one room)</option>
-        <option value="service">Home Assistant service call</option>
-        <option value="harmonyCommand">Harmony IR command (direct to hub)</option>
-        <option value="harmonyActivity">Harmony activity (direct to hub)</option>
-      </select>
-
-      <div id="dynamicHotkeyInputs"></div>
-      <div class="btn-row">
-        <button id="addHotkeyBtn" onclick="addHotkey()">Add hotkey</button>
-        <button id="cancelHotkeyEditBtn" class="secondary" style="display:none" onclick="cancelHotkeyEdit()">Cancel edit</button>
-      </div>
-      <div id="hotkeysList" style="margin-top:12px"></div>
-    </div>
-
-    <h2>2. IR Devices</h2>
-    <div class="section-box">
-      <div class="hint">
-        A registry of named IR commands per physical device — works fully offline,
-        no Harmony hub, no Home Assistant, no cloud. Used by scene_grid tiles
-        (IR device + command) and by Activities' IR-sourced devices below.
-      </div>
-
-      <label>Device name</label>
-      <input type="text" id="irDevName" placeholder="e.g., TV Salon">
-
-      <div class="hint" style="margin-top:10px"><strong>Add a command</strong></div>
-      <label>From the community database</label>
-      <select id="irCategory" onchange="onIrCategoryChange()"><option value="">Loading…</option></select>
-      <label>Brand</label>
-      <select id="irBrand" onchange="onIrBrandChange()" disabled><option value="">— select a category first —</option></select>
-      <label>Model</label>
-      <select id="irModel" onchange="onIrModelChange()" disabled><option value="">— select a brand first —</option></select>
-      <label>Command</label>
-      <select id="irCommand" disabled><option value="">— select a model first —</option></select>
-      <div class="btn-row" style="margin-top:6px">
-        <button type="button" class="secondary" onclick="importAllIrCommands()">Import all commands from this model</button>
-      </div>
-
-      <label style="margin-top:10px">— or — paste a Pronto Hex code manually</label>
-      <input type="text" id="irManualPronto" placeholder="0000 006D 0022 0000 00AC 00AC 0016 0016 ...">
-      <input type="text" id="irManualLabel" placeholder='Label (optional, e.g. "Power")' style="margin-top:6px">
-
-      <label style="margin-top:10px">Save this command as</label>
-      <input type="text" id="irCommandId" placeholder="e.g., power, hdmi1, volume_up">
-      <div class="btn-row">
-        <button type="button" class="secondary" onclick="addIrCommand()">+ Add command</button>
-      </div>
-
-      <div id="irCommandsList" style="margin-top:12px"></div>
-      <div class="btn-row">
-        <button id="saveIrDeviceBtn" onclick="saveIrDevice()">Save device</button>
-        <button id="cancelIrDeviceEditBtn" class="secondary" style="display:none" onclick="cancelIrDeviceEdit()">Cancel edit</button>
-      </div>
-      <div id="irDevicesList" style="margin-top:12px"></div>
-    </div>
-
-    <h2>3. Activities</h2>
-    <div class="section-box">
-      <div class="hint">
-        A composed AV Activity ("Watch Apple TV", "Listen to Music"...) that
-        orchestrates more than one device, mixing IR/Harmony/HA freely. Scoped
-        to one room — at runtime, only one Activity is active per room at a
-        time. For a single-device/single-action Activity (one HA script, one
-        existing Harmony Activity), you don't need this section — just tick
-        "Track as Activity" on a scene_grid tile instead.
-      </div>
-      <div class="btn-row">
-        <button onclick="startActivityWizard()">+ New Activity</button>
-      </div>
-      <div id="activitiesList" style="margin-top:12px"></div>
-    </div>
-
-    <h2>4. Theme & Colors</h2>
-    <div class="section-box" id="themeBox"></div>
-
-    <h2>5. Generated JSON</h2>
-    <textarea id="jsonOutput" readonly></textarea>
-    <div class="btn-row">
-      <button onclick="copyJson()">Copy JSON</button>
-      <button class="secondary" onclick="downloadJson()">Download dashboard.json</button>
-      <button id="saveToDeviceBtn" style="display:none" onclick="saveDashboardToDevice()">Save to device</button>
-    </div>
-  </div>
-
-  <!-- RIGHT PANE -->
-  <div class="preview-pane">
-    <h2 style="margin-top:0">Preview</h2>
-    <div class="ha-toolbar">
-      <div id="tabs" class="tabs"></div>
-      <button type="button" class="ha-icon-btn" title="Add page" onclick="openPageDialog(null)">+</button>
-    </div>
-    <div class="remote-frame-scale-wrap">
-      <div class="remote-frame">
-
-        <div class="remote-screen-container">
-          <div class="remote-screen" onclick="openPreviewModal()">
-            <div class="remote-screen-scaler">
-              <div class="remote-status-bar">
-                <span class="sb-wifi">📶</span>
-                <span class="sb-time" id="sbTime">21:42</span>
-                <span class="sb-battery">🔋</span>
-              </div>
-              <div id="content" class="remote-screen-content"></div>
-              <button type="button" class="preview-add-fab" title="Add card" onclick="event.stopPropagation(); openCardDialog(null)">+</button>
+        <h2>Load an existing dashboard.json (optional)</h2>
+        <div class="section-box">
+            <textarea id="importBox" rows="4" placeholder="Paste your current dashboard.json here to edit it, or leave empty to start fresh."></textarea>
+            <div class="btn-row">
+                <button onclick="importJson()">Load</button>
+                <button class="secondary" onclick="resetAll()">Start over</button>
             </div>
-          </div>
         </div>
 
-        <!-- Physical buttons below are decorative only (no on-click behaviour),
-             same as the old remote.png photo — they mirror the real device's
-             layout/labels but aren't part of the dashboard being edited. -->
-
-        <!-- ZONE 1: back / home / power -->
-        <div class="remote-zone-container remote-zone-1">
-          <button class="hw-btn btn-retour btn-large30" title="Retour" data-hwkey="BACK">
-            <svg viewBox="0 0 24 24" class="icon-fill"><path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z"/></svg>
-          </button>
-          <button class="hw-btn btn-home recessed-pill" title="Accueil" data-hwkey="HOME">
-            <svg viewBox="0 0 24 24" class="icon-stroke">
-              <path d="M2 11.5L12 3.5l10 8" />
-              <path d="M5 13v8h14v-8" />
-            </svg>
-          </button>
-          <button class="hw-btn btn-power" title="Alimentation" data-hwkey="POWER">
-            <svg viewBox="0 0 24 24" class="icon-stroke" style="stroke-width: 1;">
-              <line x1="12" y1="3" x2="12" y2="12" />
-              <path d="M18.4 6.1a9 9 0 1 1-12.8 0" />
-            </svg>
-          </button>
+        <div class="hint" style="margin-bottom:20px">
+            Home Assistant, Harmony Hub(s), and IR Devices are configured once from
+            this device's home page (<a href="/" style="color:#00E5FF">open it</a>) —
+            everything below just references them by name.
         </div>
 
-        <!-- ZONE 2: volume/nav quad + directional pad -->
-        <div class="remote-zone-container remote-zone-2">
-          <div class="quad-grid">
-            <button class="hw-btn quad-btn top-left" title="Volume +" data-hwkey="VOLUME_UP">
-              <svg viewBox="0 0 24 24" class="icon-fill"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-            </button>
-            <button class="hw-btn quad-btn top-right" title="Page precedente" data-hwkey="PAGE_UP">
-              <svg viewBox="0 0 24 24" class="icon-fill"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6 1.41 1.41z"/></svg>
-            </button>
-            <button class="hw-btn quad-btn bottom-left" title="Volume -" data-hwkey="VOLUME_DOWN">
-              <svg viewBox="0 0 24 24" class="icon-fill"><path d="M19 13H5v-2h14v2z"/></svg>
-            </button>
-            <button class="hw-btn quad-btn bottom-right" title="Page suivante" data-hwkey="PAGE_DOWN">
-              <svg viewBox="0 0 24 24" class="icon-fill"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
-            </button>
-          </div>
-          <div class="hw-dpad">
-            <button class="dpad-btn dpad-top" title="Haut" data-hwkey="UP"></button>
-            <button class="dpad-btn dpad-right" title="Droite" data-hwkey="RIGHT"></button>
-            <button class="dpad-btn dpad-left" title="Gauche" data-hwkey="LEFT"></button>
-            <button class="dpad-btn dpad-bottom" title="Bas" data-hwkey="DOWN"></button>
-            <button class="dpad-ok" data-hwkey="CENTER">OK</button>
-          </div>
+        <h2>1. Hotkeys</h2>
+        <div class="section-box">
+            <label>Scope</label>
+            <select id="hkScope">
+                <option value="page">This page only (overrides global while page is active)</option>
+                <option value="global">Global (every page)</option>
+            </select>
+
+            <label>Press type</label>
+            <select id="hkType">
+                <option value="hotkeys">Single press</option>
+                <option value="longHotkeys">Long press (~500ms hold)</option>
+            </select>
+
+            <label>Physical key</label>
+            <select id="hkKey">
+                <option>BACK</option><option>HOME</option><option>POWER</option>
+                <option>VOLUME_UP</option><option>VOLUME_DOWN</option><option>MUTE</option>
+                <option>PAGE_UP</option><option>PAGE_DOWN</option>
+                <option>UP</option><option>DOWN</option><option>LEFT</option><option>RIGHT</option><option>CENTER</option>
+                <option>VOICE</option><option>MAIN</option>
+                <option>REWIND</option><option>PLAY</option><option>STOP</option><option>FASTFORWARD</option>
+                <option>RED_BUTTON</option><option>GREEN_BUTTON</option><option>BLUE_BUTTON</option><option>YELLOW_BUTTON</option>
+            </select>
+
+            <label>Action</label>
+            <select id="hkAction" onchange="updateHotkeyActionInputs()">
+                <option value="page">Go to page</option>
+                <option value="openOverlay">Open overlay (Settings / Active Activities)</option>
+                <option value="openCurrentActivity">Return to current Activity (for one room)</option>
+                <option value="service">Home Assistant service call</option>
+                <option value="remoteCommand">Home Assistant remote command</option>
+                <option value="harmonyCommand">Harmony IR command (direct to hub)</option>
+                <option value="harmonyActivity">Harmony activity (direct to hub)</option>
+            </select>
+
+            <div id="dynamicHotkeyInputs"></div>
+            <div class="btn-row">
+                <button id="addHotkeyBtn" onclick="addHotkey()">Add hotkey</button>
+                <button id="cancelHotkeyEditBtn" class="secondary" style="display:none" onclick="cancelHotkeyEdit()">Cancel edit</button>
+            </div>
+            <div id="hotkeysList" style="margin-top:12px"></div>
         </div>
 
-        <!-- ZONE 3: media controls -->
-        <div class="remote-zone-container remote-zone-3">
-          <button class="hw-btn" title="Muet" data-hwkey="MUTE">
-            <svg viewBox="0 0 24 24">
-              <path d="M3 9h4l5-5v16l-5-5H3V9z" class="icon-stroke" /><path d="M16.59 12L14 9.41 15.41 8 18 10.59 20.59 8 22 9.41 19.41 12 22 14.59 20.59 16 18 13.41 15.41 16 14 14.59 16.59 12z" class="icon-fill" />
-            </svg>
-          </button>
-          <button class="hw-btn btn-wide-micro recessed-pill" title="Microphone" data-hwkey="VOICE">
-            <svg viewBox="0 0 24 24" class="icon-fill"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
-          </button>
-          <button class="hw-btn" title="Menu" data-hwkey="MAIN">
-            <svg viewBox="0 0 24 24" class="icon-fill"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
-          </button>
-          <button class="hw-btn" title="Retour rapide" data-hwkey="REWIND">
-            <svg viewBox="0 0 24 24" class="icon-stroke">
-              <polygon points="11 18 3.5 12 11 6" />
-              <polygon points="20.5 18 13 12 20.5 6" />
-            </svg>
-          </button>
-          <button class="hw-btn btn-play-pause" title="Lecture / Pause" data-hwkey="PLAY">
-            <svg viewBox="0 0 24 24">
-              <polygon points="2 3 13 12 2 21" class="icon-stroke" />
-              <rect x="16" y="4" width="2" height="16" rx="0.5" class="icon-fill" />
-              <rect x="21" y="4" width="2" height="16" rx="0.5" class="icon-fill" />
-            </svg>
-          </button>
-          <button class="hw-btn" title="Arrêt" data-hwkey="STOP">
-            <svg viewBox="0 0 24 24" class="icon-stroke">
-              <rect x="6" y="6" width="12" height="12" rx="1" />
-            </svg>
-          </button>
-          <button class="hw-btn" title="Avance rapide" data-hwkey="FASTFORWARD">
-            <svg viewBox="0 0 24 24" class="icon-stroke">
-              <polygon points="13 18 20.5 12 13 6" />
-              <polygon points="3.5 18 11 12 3.5 6" />
-            </svg>
-          </button>
+        <h2>2. Activities</h2>
+        <div class="section-box">
+            <div class="hint">
+                A composed AV Activity ("Watch Apple TV", "Listen to Music"...) that
+                orchestrates more than one device, mixing IR/Harmony/HA freely. Scoped
+                to one room — at runtime, only one Activity is active per room at a
+                time. For a single-device/single-action Activity (one HA script, one
+                existing Harmony Activity), you don't need this section — just tick
+                "Track as Activity" on a scene_grid tile instead.
+            </div>
+            <div class="btn-row">
+                <button onclick="startActivityWizard()">+ New Activity</button>
+            </div>
+            <div id="activitiesList" style="margin-top:12px"></div>
         </div>
 
-        <!-- ZONE 4: colour buttons -->
-        <div class="remote-zone-container remote-zone-4">
-          <button class="hw-btn btn-color-stripe stripe-red" data-hwkey="RED_BUTTON"></button>
-          <button class="hw-btn btn-color-stripe stripe-green" data-hwkey="GREEN_BUTTON"></button>
-          <button class="hw-btn btn-color-stripe stripe-blue" data-hwkey="BLUE_BUTTON"></button>
-          <button class="hw-btn btn-color-stripe stripe-yellow" data-hwkey="YELLOW_BUTTON"></button>
+        <h2>3. Theme &amp; Colors</h2>
+        <div class="section-box" id="themeBox"></div>
+
+        <h2>4. Generated JSON</h2>
+        <textarea id="jsonOutput" readonly></textarea>
+        <div class="btn-row">
+            <button onclick="copyJson()">Copy JSON</button>
+            <button class="secondary" onclick="downloadJson()">Download dashboard.json</button>
+            <button id="saveToDeviceBtn" style="display:none" onclick="saveDashboardToDevice()">Save to device</button>
         </div>
-
-        <div class="sanytron-logo">SANYTRON</div>
-
-      </div>
     </div>
-    <div class="remote-tap-hint">🔍 Tap the screen to edit at full size</div>
-    <div id="hotkeysInfo"></div>
-  </div>
-</div>
 
-<div id="previewModal" class="preview-modal" onclick="if (event.target === this) closePreviewModal()">
-  <div class="preview-modal-inner">
-    <button class="preview-modal-close" onclick="closePreviewModal()">✕ Close</button>
-    <div id="modalScreenSlot"></div>
-  </div>
-</div>
+    <!-- RIGHT PANE -->
+    <div class="preview-pane">
+        <h2 style="margin-top:0">Preview</h2>
+        <div class="ha-toolbar">
+            <div id="tabs" class="tabs"></div>
+            <button type="button" class="ha-icon-btn" title="Add page" onclick="openPageDialog(null)">+</button>
+        </div>
+        <div class="remote-frame-scale-wrap">
+            <div class="remote-frame">
 
-<div id="cardEditorModal" class="preview-modal" onclick="if (event.target === this) cancelCardEdit()">
-  <div class="preview-modal-inner ha-dialog">
-    <button class="preview-modal-close" onclick="cancelCardEdit()">✕ Close</button>
-    <h2 style="margin-top:0" id="cardEditorTitle">Add card</h2>
-    <div class="section-box">
-      <label>Card type</label>
-      <select id="cardTypeSelect" onchange="updateCardFormInputs()">
-        <optgroup label="Common">
-          <option value="title">Title (title)</option>
-          <option value="light">Light (light)</option>
-          <option value="switch">Switch (switch)</option>
-          <option value="cover">Cover / Shutter (cover)</option>
-          <option value="fan">Fan (fan)</option>
-          <option value="climate">Climate (climate)</option>
-          <option value="source_select">Source selector (source_select)</option>
-          <option value="select">Select / dropdown (select)</option>
-        </optgroup>
-        <optgroup label="Grids">
-          <option value="button_grid">Button grid (button_grid)</option>
-          <option value="scene_grid">Scene grid (scene_grid)</option>
-        </optgroup>
-        <optgroup label="Remotes">
-          <option value="apple_tv_remote">Apple TV remote (apple_tv_remote)</option>
-          <option value="tv_remote">TV / media remote (tv_remote)</option>
-        </optgroup>
-        <optgroup label="Advanced (raw options)">
-          <option value="clock_weather">Clock &amp; weather (clock_weather)</option>
-          <option value="media_player">Media player (media_player)</option>
-          <option value="camera">Camera (camera)</option>
-          <option value="speaker_group">Speaker group (speaker_group)</option>
-          <option value="monitor">System monitor (monitor)</option>
-          <option value="picture_elements">Picture elements (picture_elements)</option>
-          <option value="plex">Plex (plex)</option>
-          <option value="row">Row layout (row)</option>
-          <option value="vacuum">Vacuum (vacuum)</option>
-          <option value="custom">Other / custom type…</option>
-        </optgroup>
-      </select>
+                <div class="remote-screen-container">
+                    <div class="remote-screen" onclick="openPreviewModal()">
+                        <div class="remote-screen-scaler">
+                            <div class="remote-status-bar">
+                                <span class="sb-wifi">📶</span>
+                                <span class="sb-time" id="sbTime">21:42</span>
+                                <span class="sb-battery">🔋</span>
+                            </div>
+                            <div id="content" class="remote-screen-content"></div>
+                            <button type="button" class="preview-add-fab" title="Add card" onclick="event.stopPropagation(); openCardDialog(null)">+</button>
+                        </div>
+                    </div>
+                </div>
 
-      <div id="dynamicCardInputs"></div>
-      <div class="btn-row">
-        <button id="addCardBtn" onclick="addCardToPage()">Add card to page</button>
-        <button id="cancelCardEditBtn" class="secondary" onclick="cancelCardEdit()">Cancel</button>
-      </div>
+                <!-- Physical buttons below are decorative only (no on-click behaviour),
+                     same as the old remote.png photo — they mirror the real device's
+                     layout/labels but aren't part of the dashboard being edited. -->
+
+                <!-- ZONE 1: back / home / power -->
+                <div class="remote-zone-container remote-zone-1">
+                    <button class="hw-btn btn-retour btn-large30" title="Back" data-hwkey="BACK">
+                        <svg viewBox="0 0 24 24" class="icon-fill"><path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z"/></svg>
+                    </button>
+                    <button class="hw-btn btn-home recessed-pill" title="Home" data-hwkey="HOME">
+                        <svg viewBox="0 0 24 24" class="icon-stroke">
+                            <path d="M2 11.5L12 3.5l10 8" />
+                            <path d="M5 13v8h14v-8" />
+                        </svg>
+                    </button>
+                    <button class="hw-btn btn-power" title="Power" data-hwkey="POWER">
+                        <svg viewBox="0 0 24 24" class="icon-stroke" style="stroke-width: 1;">
+                            <line x1="12" y1="3" x2="12" y2="12" />
+                            <path d="M18.4 6.1a9 9 0 1 1-12.8 0" />
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- ZONE 2: volume/nav quad + directional pad -->
+                <div class="remote-zone-container remote-zone-2">
+                    <div class="quad-grid">
+                        <button class="hw-btn quad-btn top-left" title="Volume +" data-hwkey="VOLUME_UP">
+                            <svg viewBox="0 0 24 24" class="icon-fill"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                        </button>
+                        <button class="hw-btn quad-btn top-right" title="Previous page" data-hwkey="PAGE_UP">
+                            <svg viewBox="0 0 24 24" class="icon-fill"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6 1.41 1.41z"/></svg>
+                        </button>
+                        <button class="hw-btn quad-btn bottom-left" title="Volume -" data-hwkey="VOLUME_DOWN">
+                            <svg viewBox="0 0 24 24" class="icon-fill"><path d="M19 13H5v-2h14v2z"/></svg>
+                        </button>
+                        <button class="hw-btn quad-btn bottom-right" title="Next page" data-hwkey="PAGE_DOWN">
+                            <svg viewBox="0 0 24 24" class="icon-fill"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+                        </button>
+                    </div>
+                    <div class="hw-dpad">
+                        <button class="dpad-btn dpad-top" title="Haut" data-hwkey="UP"></button>
+                        <button class="dpad-btn dpad-right" title="Droite" data-hwkey="RIGHT"></button>
+                        <button class="dpad-btn dpad-left" title="Gauche" data-hwkey="LEFT"></button>
+                        <button class="dpad-btn dpad-bottom" title="Bas" data-hwkey="DOWN"></button>
+                        <button class="dpad-ok" data-hwkey="CENTER">OK</button>
+                    </div>
+                </div>
+
+                <!-- ZONE 3: media controls -->
+                <div class="remote-zone-container remote-zone-3">
+                    <button class="hw-btn" title="Mute" data-hwkey="MUTE">
+                        <svg viewBox="0 0 24 24">
+                            <path d="M3 9h4l5-5v16l-5-5H3V9z" class="icon-stroke" /><path d="M16.59 12L14 9.41 15.41 8 18 10.59 20.59 8 22 9.41 19.41 12 22 14.59 20.59 16 18 13.41 15.41 16 14 14.59 16.59 12z" class="icon-fill" />
+                        </svg>
+                    </button>
+                    <button class="hw-btn btn-wide-micro recessed-pill" title="Microphone" data-hwkey="VOICE">
+                        <svg viewBox="0 0 24 24" class="icon-fill"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+                    </button>
+                    <button class="hw-btn" title="Menu" data-hwkey="MAIN">
+                        <svg viewBox="0 0 24 24" class="icon-fill"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+                    </button>
+                    <button class="hw-btn" title="Rewind" data-hwkey="REWIND">
+                        <svg viewBox="0 0 24 24" class="icon-stroke">
+                            <polygon points="11 18 3.5 12 11 6" />
+                            <polygon points="20.5 18 13 12 20.5 6" />
+                        </svg>
+                    </button>
+                    <button class="hw-btn btn-play-pause" title="Play / Pause" data-hwkey="PLAY">
+                        <svg viewBox="0 0 24 24">
+                            <polygon points="2 3 13 12 2 21" class="icon-stroke" />
+                            <rect x="16" y="4" width="2" height="16" rx="0.5" class="icon-fill" />
+                            <rect x="21" y="4" width="2" height="16" rx="0.5" class="icon-fill" />
+                        </svg>
+                    </button>
+                    <button class="hw-btn" title="Stop" data-hwkey="STOP">
+                        <svg viewBox="0 0 24 24" class="icon-stroke">
+                            <rect x="6" y="6" width="12" height="12" rx="1" />
+                        </svg>
+                    </button>
+                    <button class="hw-btn" title="Fast-forward" data-hwkey="FASTFORWARD">
+                        <svg viewBox="0 0 24 24" class="icon-stroke">
+                            <polygon points="13 18 20.5 12 13 6" />
+                            <polygon points="3.5 18 11 12 3.5 6" />
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- ZONE 4: colour buttons -->
+                <div class="remote-zone-container remote-zone-4">
+                    <button class="hw-btn btn-color-stripe stripe-red" data-hwkey="RED_BUTTON"></button>
+                    <button class="hw-btn btn-color-stripe stripe-green" data-hwkey="GREEN_BUTTON"></button>
+                    <button class="hw-btn btn-color-stripe stripe-blue" data-hwkey="BLUE_BUTTON"></button>
+                    <button class="hw-btn btn-color-stripe stripe-yellow" data-hwkey="YELLOW_BUTTON"></button>
+                </div>
+
+                <div class="sanytron-logo">SANYTRON</div>
+
+            </div>
+        </div>
+        <div class="remote-tap-hint">🔍 Tap the screen to edit at full size</div>
+        <div id="hotkeysInfo"></div>
     </div>
-  </div>
 </div>
 
-<div id="pageDialogModal" class="preview-modal" onclick="if (event.target === this) closePageDialog()">
-  <div class="preview-modal-inner ha-dialog">
-    <button class="preview-modal-close" onclick="closePageDialog()">✕ Close</button>
-    <h2 style="margin-top:0" id="pageDialogTitle">Add page</h2>
-    <div class="section-box">
-      <label>Page name</label>
-      <input type="text" id="pageDialogName" placeholder="e.g., Living Room, Apple TV...">
-      <label style="margin-top:10px">Parent page (optional)</label>
-      <select id="pageDialogParent" onchange="onPageDialogParentChange()"></select>
-      <div class="hint" style="margin-top:4px">Makes this a child page — navigate to it via a card's own "Page to open" (e.g. a scene_grid tile), and a physical button jumps back to the parent automatically.</div>
-      <div id="pageDialogParentKeyRow" style="display:none">
-        <label style="margin-top:10px">Return-to-parent button</label>
-        <select id="pageDialogParentKey">
-          <option>BACK</option><option>HOME</option><option>POWER</option>
-          <option>VOLUME_UP</option><option>VOLUME_DOWN</option><option>MUTE</option>
-          <option>PAGE_UP</option><option>PAGE_DOWN</option>
-          <option>UP</option><option>DOWN</option><option>LEFT</option><option>RIGHT</option><option>CENTER</option>
-          <option>VOICE</option><option>MAIN</option>
-          <option>REWIND</option><option>PLAY</option><option>STOP</option><option>FASTFORWARD</option>
-          <option>RED_BUTTON</option><option>GREEN_BUTTON</option><option>BLUE_BUTTON</option><option>YELLOW_BUTTON</option>
-        </select>
-        <div class="hint" style="margin-top:4px">Defaults to BACK. Pick a different button if BACK is already used for something else on this page, or if you'd rather reserve BACK entirely. If this page also binds its own hotkey on the chosen button, that hotkey wins and the parent-jump is skipped.</div>
-      </div>
-      <label class="inline-check" style="margin-top:10px"><input type="checkbox" id="pageDialogStart"> Start page (shown on launch)</label>
-      <div class="btn-row" style="margin-top:12px">
-        <button onclick="savePageDialog()">Save</button>
-        <button class="secondary" onclick="closePageDialog()">Cancel</button>
-        <button id="pageDialogDeleteBtn" class="danger" style="display:none" onclick="deletePageFromDialog()">Delete page</button>
-      </div>
+<div id="previewModal" class="preview-modal" >
+    <div class="preview-modal-inner">
+        <button class="preview-modal-close" onclick="closePreviewModal()">✕ Close</button>
+        <div id="modalScreenSlot"></div>
     </div>
-  </div>
 </div>
 
-<div id="activityWizardModal" class="preview-modal" onclick="if (event.target === this) closeActivityWizard()">
-  <div class="preview-modal-inner ha-dialog">
-    <button class="preview-modal-close" onclick="closeActivityWizard()">✕ Close</button>
-    <h2 style="margin-top:0" id="activityWizardTitle">New Activity</h2>
-    <div id="wizStepLabel" class="hint" style="margin-bottom:10px"></div>
-    <div class="section-box">
-      <div id="wizBody"></div>
-      <div class="btn-row" style="margin-top:14px">
-        <button id="wizBackBtn" class="secondary" onclick="wizardBack()">Back</button>
-        <button id="wizNextBtn" onclick="wizardNext()">Next</button>
-        <button id="wizSaveBtn" style="display:none" onclick="saveActivityWizard()">Save Activity</button>
-      </div>
+<div id="cardEditorModal" class="preview-modal" >
+    <div class="preview-modal-inner ha-dialog">
+        <button class="preview-modal-close" onclick="cancelCardEdit()">✕ Close</button>
+        <h2 style="margin-top:0" id="cardEditorTitle">Add card</h2>
+        <div class="section-box">
+            <label>Card type</label>
+            <select id="cardTypeSelect" onchange="updateCardFormInputs()">
+                <optgroup label="Common">
+                    <option value="title">Title (title)</option>
+                    <option value="light">Light (light)</option>
+                    <option value="switch">Switch (switch)</option>
+                    <option value="cover">Cover / Shutter (cover)</option>
+                    <option value="fan">Fan (fan)</option>
+                    <option value="climate">Climate (climate)</option>
+                    <option value="source_select">Source selector (source_select)</option>
+                    <option value="select">Select / dropdown (select)</option>
+                </optgroup>
+                <optgroup label="Grids">
+                    <option value="button_grid">Button grid (button_grid)</option>
+                    <option value="scene_grid">Scene grid (scene_grid)</option>
+                </optgroup>
+                <optgroup label="Remotes">
+                    <option value="apple_tv_remote">Apple TV remote (apple_tv_remote)</option>
+                    <option value="tv_remote">TV / media remote (tv_remote)</option>
+                </optgroup>
+                <optgroup label="Advanced (raw options)">
+                    <option value="clock_weather">Clock &amp; weather (clock_weather)</option>
+                    <option value="media_player">Media player (media_player)</option>
+                    <option value="camera">Camera (camera)</option>
+                    <option value="speaker_group">Speaker group (speaker_group)</option>
+                    <option value="monitor">System monitor (monitor)</option>
+                    <option value="picture_elements">Picture elements (picture_elements)</option>
+                    <option value="plex">Plex (plex)</option>
+                    <option value="row">Row layout (row)</option>
+                    <option value="vacuum">Vacuum (vacuum)</option>
+                    <option value="custom">Other / custom type…</option>
+                </optgroup>
+            </select>
+
+            <div id="dynamicCardInputs"></div>
+            <div class="btn-row">
+                <button id="addCardBtn" onclick="addCardToPage()">Add card to page</button>
+                <button id="cancelCardEditBtn" class="secondary" onclick="cancelCardEdit()">Cancel</button>
+            </div>
+        </div>
     </div>
-  </div>
 </div>
 
-<div id="iconPickerModal" class="preview-modal" onclick="if (event.target === this) closeIconPicker()">
-  <div class="preview-modal-inner icon-picker-inner">
-    <button class="preview-modal-close" onclick="closeIconPicker()">✕ Close</button>
-    <h2 style="margin-top:0">Choose an icon</h2>
-    <div class="hint">Icons already uploaded via the "Icons" section on the device's home page (<code>/</code>).</div>
-    <div id="iconPickerGrid" class="icon-picker-grid"></div>
-  </div>
+<div id="pageDialogModal" class="preview-modal" >
+    <div class="preview-modal-inner ha-dialog">
+        <button class="preview-modal-close" onclick="closePageDialog()">✕ Close</button>
+        <h2 style="margin-top:0" id="pageDialogTitle">Add page</h2>
+        <div class="section-box">
+            <label>Page name</label>
+            <input type="text" id="pageDialogName" placeholder="e.g., Living Room, Apple TV...">
+            <label style="margin-top:10px">Parent page (optional)</label>
+            <select id="pageDialogParent" onchange="onPageDialogParentChange()"></select>
+            <div class="hint" style="margin-top:4px">Makes this a child page — navigate to it via a card's own "Page to open" (e.g. a scene_grid tile), and a physical button jumps back to the parent automatically.</div>
+            <div id="pageDialogParentKeyRow" style="display:none">
+                <label style="margin-top:10px">Return-to-parent button</label>
+                <select id="pageDialogParentKey">
+                    <option>BACK</option><option>HOME</option><option>POWER</option>
+                    <option>VOLUME_UP</option><option>VOLUME_DOWN</option><option>MUTE</option>
+                    <option>PAGE_UP</option><option>PAGE_DOWN</option>
+                    <option>UP</option><option>DOWN</option><option>LEFT</option><option>RIGHT</option><option>CENTER</option>
+                    <option>VOICE</option><option>MAIN</option>
+                    <option>REWIND</option><option>PLAY</option><option>STOP</option><option>FASTFORWARD</option>
+                    <option>RED_BUTTON</option><option>GREEN_BUTTON</option><option>BLUE_BUTTON</option><option>YELLOW_BUTTON</option>
+                </select>
+                <div class="hint" style="margin-top:4px">Defaults to BACK. Pick a different button if BACK is already used for something else on this page, or if you'd rather reserve BACK entirely. If this page also binds its own hotkey on the chosen button, that hotkey wins and the parent-jump is skipped.</div>
+            </div>
+            <label class="inline-check" style="margin-top:10px"><input type="checkbox" id="pageDialogStart"> Start page (shown on launch)</label>
+            <div class="btn-row" style="margin-top:12px">
+                <button onclick="savePageDialog()">Save</button>
+                <button class="secondary" onclick="closePageDialog()">Cancel</button>
+                <button id="pageDialogDeleteBtn" class="danger" style="display:none" onclick="deletePageFromDialog()">Delete page</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="activityWizardModal" class="preview-modal" >
+    <div class="preview-modal-inner ha-dialog">
+        <button class="preview-modal-close" onclick="closeActivityWizard()">✕ Close</button>
+        <h2 style="margin-top:0" id="activityWizardTitle">New Activity</h2>
+        <div id="wizStepLabel" class="hint" style="margin-bottom:10px"></div>
+        <div class="section-box">
+            <div id="wizBody"></div>
+            <div class="btn-row" style="margin-top:14px">
+                <button id="wizBackBtn" class="secondary" onclick="wizardBack()">Back</button>
+                <button id="wizNextBtn" onclick="wizardNext()">Next</button>
+                <button id="wizSaveBtn" style="display:none" onclick="saveActivityWizard()">Save Activity</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="iconPickerModal" class="preview-modal" >
+    <div class="preview-modal-inner icon-picker-inner">
+        <button class="preview-modal-close" onclick="closeIconPicker()">✕ Close</button>
+        <h2 style="margin-top:0">Choose an icon</h2>
+        <div class="hint">Icons already uploaded via the "Icons" section on the device's home page (<code>/</code>).</div>
+        <div id="iconPickerGrid" class="icon-picker-grid"></div>
+    </div>
 </div>
 
 <div id="toast" class="toast"></div>
@@ -386,12 +361,11 @@
 <script src="js/cards.js"></script>
 <script src="js/harmony.js"></script>
 <script src="js/hotkeys.js"></script>
-<script src="js/ir.js"></script>
 <script src="js/activities.js"></script>
 <script src="js/theme.js"></script>
 <script src="js/export.js"></script>
 <script src="js/preview.js"></script>
 <script src="js/device.js"></script>
-<script>initEditor();</script>
+<script>applyUiI18n(); initEditor(); loadStableBadge();</script>
 </body>
 </html>

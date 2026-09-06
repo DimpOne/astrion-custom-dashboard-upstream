@@ -1,10 +1,11 @@
 package com.custom.astrion.ui
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.provider.Settings
+import android.util.Log
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BrightnessMedium
 import androidx.compose.material.icons.filled.SettingsSuggest
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Icon
@@ -27,11 +30,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,11 +47,17 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.custom.astrion.BuildConfig
 import com.custom.astrion.R
 import com.custom.astrion.cards.CardContext
 import com.custom.astrion.ha.ConnectionState
+import com.custom.astrion.update.UpdateChecker
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Settings panel in the style of HaRemote (their SettingActivity /
@@ -61,10 +72,49 @@ import java.net.NetworkInterface
  * swipe-down-from-top overlay, not through CardRegistry/CardConfig like
  * the swipeable-page cards are.
  */
+/**
+ * Checks for an app update once each time Settings is opened (not on a
+ * background timer, to avoid polling GitHub while the app just sits on the
+ * dashboard). A beta/debug build (versionNameSuffix = "-beta", see
+ * build.gradle.kts) checks the rolling dev-latest pre-release instead of
+ * /releases/latest — otherwise this row would never fire on a beta install,
+ * since dev-latest is never "the newer official release". A Failed result
+ * (network error, GitHub rate limit, misconfigured REPO constant...) is
+ * logged rather than silently dropped, so a report of "the update
+ * notification doesn't work" is diagnosable from logcat instead of
+ * indistinguishable from "genuinely up to date".
+ */
+@Composable
+private fun rememberUpdateCheck(): Pair<UpdateChecker.UpdateInfo?, Boolean> {
+    var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
+    var updateIsBeta by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        val isBeta = BuildConfig.VERSION_NAME.contains("-beta")
+        val result =
+            withContext(Dispatchers.IO) {
+                if (isBeta) UpdateChecker.checkBetaUpdate() else UpdateChecker.checkForUpdate()
+            }
+        when (result) {
+            is UpdateChecker.CheckResult.Available -> {
+                updateInfo = result.info
+                updateIsBeta = isBeta
+            }
+            is UpdateChecker.CheckResult.Failed ->
+                Log.w("SettingsMenu", "Update check failed (beta=$isBeta): ${result.reason}")
+            UpdateChecker.CheckResult.UpToDate -> Unit
+        }
+    }
+
+    return updateInfo to updateIsBeta
+}
+
 @Composable
 fun SettingsMenu(ctx: CardContext) {
     val context = LocalContext.current
     val activity = context as? Activity
+    val scope = rememberCoroutineScope()
+    val (updateInfo, updateIsBeta) = rememberUpdateCheck()
 
     Column(
         modifier =
@@ -82,10 +132,18 @@ fun SettingsMenu(ctx: CardContext) {
             fontWeight = FontWeight.SemiBold
         )
 
+        updateInfo?.let { info ->
+            UpdateRow(context, scope, info, updateIsBeta)
+        }
+
         localIpAddress()?.let { ip ->
             Text(
-                if (ctx.configServerEnabled) "Local config: http://$ip:8080" else stringResource(R.string.config_server_off_hint),
-                color = if (ctx.configServerEnabled) LocalTheme.current.accent else LocalTheme.current.mutedText,
+                if (ctx.deviceSettings.configServerEnabled) {
+                    stringResource(R.string.settings_local_config, "http://$ip:8080")
+                } else {
+                    stringResource(R.string.config_server_off_hint)
+                },
+                color = if (ctx.deviceSettings.configServerEnabled) LocalTheme.current.accent else LocalTheme.current.mutedText,
                 fontSize = 12.sp
             )
         }
@@ -107,7 +165,29 @@ fun SettingsMenu(ctx: CardContext) {
         }
 
         WakeOnMotionRow(ctx)
+        WifiKeepAwakeRow(ctx)
         ConfigServerRow(ctx)
+        TapFeedbackRow(ctx)
+    }
+}
+
+@Composable
+private fun UpdateRow(context: Context, scope: CoroutineScope, info: UpdateChecker.UpdateInfo, isBeta: Boolean) {
+    val label =
+        if (isBeta) {
+            stringResource(R.string.settings_beta_update_available, info.version)
+        } else {
+            stringResource(R.string.settings_update_available, info.version)
+        }
+    SettingRow(icon = Icons.Filled.SystemUpdate, label = label) {
+        scope.launch(Dispatchers.IO) {
+            val file = UpdateChecker.download(context, info.apkUrl)
+            if (file != null) {
+                withContext(Dispatchers.Main) {
+                    UpdateChecker.promptInstall(context, file)
+                }
+            }
+        }
     }
 }
 
@@ -124,7 +204,7 @@ private fun ConnectionStatusSection(ctx: CardContext) {
             if (haConnected) {
                 stringResource(R.string.connected)
             } else {
-                haConnection.name.lowercase().replaceFirstChar { it.uppercase() }
+                stringResource(haStatusString(haConnection))
             }
         )
         ConnectionStatusRow(
@@ -133,6 +213,13 @@ private fun ConnectionStatusSection(ctx: CardContext) {
             detail = stringResource(if (ctx.harmonyConnected) R.string.connected else R.string.disconnected)
         )
     }
+}
+
+private fun haStatusString(state: ConnectionState): Int = when (state) {
+    ConnectionState.CONNECTING, ConnectionState.AUTHENTICATING -> R.string.connection_connecting
+    ConnectionState.AUTH_FAILED -> R.string.connection_auth_failed
+    ConnectionState.ERROR -> R.string.connection_error_retrying
+    else -> R.string.disconnected
 }
 
 @Composable
@@ -229,9 +316,40 @@ private fun WakeOnMotionRow(ctx: CardContext) {
         Text(stringResource(R.string.wake_on_motion), color = LocalTheme.current.primaryText, fontSize = 14.sp)
         Spacer(Modifier.weight(1f))
         Switch(
-            checked = ctx.wakeOnMotionEnabled,
-            onCheckedChange = { ctx.setWakeOnMotionEnabled(it) },
+            checked = ctx.deviceSettings.wakeOnMotionEnabled,
+            onCheckedChange = { ctx.deviceSettings.setWakeOnMotionEnabled(it) },
             colors = SwitchDefaults.colors(checkedTrackColor = LocalTheme.current.accent)
+        )
+    }
+}
+
+/**
+ * "Keep Wi-Fi awake" switch — off by default. See [CardContext.wifiKeepAwakeEnabled]'s
+ * doc for the battery-vs-reachability trade-off; this is purely about Home
+ * Assistant reaching this device (services, push-webhook) while the screen's
+ * off, not about the device's own connectivity for anything it initiates itself.
+ */
+@Composable
+private fun WifiKeepAwakeRow(ctx: CardContext) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(Icons.Filled.Wifi, contentDescription = null, tint = LocalTheme.current.mutedText)
+            Text(stringResource(R.string.wifi_keep_awake), color = LocalTheme.current.primaryText, fontSize = 14.sp)
+            Spacer(Modifier.weight(1f))
+            Switch(
+                checked = ctx.deviceSettings.wifiKeepAwakeEnabled,
+                onCheckedChange = { ctx.deviceSettings.setWifiKeepAwakeEnabled(it) },
+                colors = SwitchDefaults.colors(checkedTrackColor = LocalTheme.current.accent)
+            )
+        }
+        Text(
+            stringResource(R.string.wifi_keep_awake_hint),
+            color = LocalTheme.current.mutedText,
+            fontSize = 11.sp
         )
     }
 }
@@ -257,13 +375,38 @@ private fun ConfigServerRow(ctx: CardContext) {
             Text(stringResource(R.string.config_server_toggle), color = LocalTheme.current.primaryText, fontSize = 14.sp)
             Spacer(Modifier.weight(1f))
             Switch(
-                checked = ctx.configServerEnabled,
-                onCheckedChange = { ctx.setConfigServerEnabled(it) },
+                checked = ctx.deviceSettings.configServerEnabled,
+                onCheckedChange = { ctx.deviceSettings.setConfigServerEnabled(it) },
                 colors = SwitchDefaults.colors(checkedTrackColor = LocalTheme.current.accent)
             )
         }
         Text(
             stringResource(R.string.config_server_toggle_hint),
+            color = LocalTheme.current.mutedText,
+            fontSize = 11.sp
+        )
+    }
+}
+
+@Composable
+private fun TapFeedbackRow(ctx: CardContext) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(Icons.Filled.TouchApp, contentDescription = null, tint = LocalTheme.current.mutedText)
+            Text(stringResource(R.string.tap_feedback), color = LocalTheme.current.primaryText, fontSize = 14.sp)
+            Spacer(Modifier.weight(1f))
+            Switch(
+                checked = ctx.deviceSettings.tapFeedbackEnabled,
+                onCheckedChange = { ctx.deviceSettings.setTapFeedbackEnabled(it) },
+                colors = SwitchDefaults.colors(checkedTrackColor = LocalTheme.current.accent)
+            )
+        }
+        Text(
+            stringResource(R.string.tap_feedback_hint),
             color = LocalTheme.current.mutedText,
             fontSize = 11.sp
         )
@@ -278,7 +421,7 @@ private fun SettingRow(icon: ImageVector?, label: String, onClick: () -> Unit) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(LocalTheme.current.controlBackground)
-            .clickable(onClick = onClick)
+            .tapClickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)

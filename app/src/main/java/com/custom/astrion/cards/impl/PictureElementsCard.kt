@@ -1,6 +1,5 @@
 package com.custom.astrion.cards.impl
 
-import android.graphics.BitmapFactory
 import android.os.Environment
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -10,7 +9,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -40,12 +38,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -55,7 +54,8 @@ import com.custom.astrion.cards.CardConfig
 import com.custom.astrion.cards.CardContext
 import com.custom.astrion.cards.CardRenderer
 import com.custom.astrion.ha.ServiceCall
-import java.io.File
+import com.custom.astrion.ui.decodeIconSampled
+import com.custom.astrion.ui.tapClickable
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -79,14 +79,17 @@ class PictureElementsCard : CardRenderer {
         val elements = (config.options["elements"] as? List<Map<String, Any?>>) ?: emptyList()
         var showVacuumDialog by remember { mutableStateOf(false) }
 
-        // Decode off-thread safely via produceState + Dispatchers.IO
-        val bitmap by produceState<ImageBitmap?>(initialValue = null, imagePath) {
+        // Decode off-thread, downsampled to the card's rendered width so a
+        // 2000+px floorplan PNG doesn't eat ~12MB of bitmap memory + a GPU
+        // texture that may exceed the HA100's 4096px max. The card is
+        // fillMaxWidth, so the screen width in px is a close target.
+        val targetPx = with(LocalDensity.current) {
+            LocalConfiguration.current.screenWidthDp.dp.toPx()
+        }.toInt()
+        val bitmap by produceState<ImageBitmap?>(initialValue = null, imagePath, targetPx) {
             value =
                 withContext(Dispatchers.IO) {
-                    runCatching {
-                        val f = File(imagePath)
-                        if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
-                    }.getOrNull()
+                    decodeIconSampled(imagePath, targetPx)
                 }
         }
 
@@ -147,7 +150,7 @@ class PictureElementsCard : CardRenderer {
                         .size(iconBox)
                         .clip(CircleShape)
                         .background(bg)
-                        .clickable {
+                        .tapClickable {
                             when {
                                 entityId != null -> ctx.client.toggle(entityId)
                                 service != null -> {
@@ -227,14 +230,14 @@ class PictureElementsCard : CardRenderer {
             modifier =
             Modifier
                 .offset(x = x, y = y)
-                .clickable(onClick = onOpen)
+                .tapClickable(onClick = onOpen)
         ) {
-            RoboVacIcon(vac = vac, docked = docked, moving = active)
+            RoboVacIcon(vac = vac, docked = docked, moving = active, screenOn = ctx.screenOn)
         }
     }
 
     @Composable
-    private fun RoboVacIcon(vac: Dp, docked: Boolean, moving: Boolean) {
+    private fun RoboVacIcon(vac: Dp, docked: Boolean, moving: Boolean, screenOn: Boolean) {
         val body = Color(0xFF3A4A52)
         val bump = Color(0xFF7B8C96)
 
@@ -253,7 +256,7 @@ class PictureElementsCard : CardRenderer {
             }
         } else {
             val angle =
-                if (moving) {
+                if (moving && screenOn) {
                     val t = rememberInfiniteTransition(label = "vacrock")
                     t
                         .animateFloat(
@@ -269,7 +272,7 @@ class PictureElementsCard : CardRenderer {
                 } else {
                     0f
                 }
-            VacBody(vac, body, bump, Modifier.rotate(angle))
+            VacBody(vac, body, bump, Modifier.graphicsLayer { rotationZ = angle })
         }
     }
 

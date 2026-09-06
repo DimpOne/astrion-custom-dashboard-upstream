@@ -368,11 +368,10 @@ function renderPreview() {
   if (hkInfo) {
     if (globalKeys + pageKeys > 0) {
       let hkHtml = `<div class="hotkeys-badge"><strong>⚡ Hotkeys active on this page:</strong><br>`;
-      const describe = (h) => h.page ? `→ page "${h.page}"` : h.service ? `→ ${h.service}` : h.harmonyCommand ? `→ Harmony ${h.harmonyCommand}` : h.harmonyActivity ? `→ Harmony activity ${h.harmonyActivity}` : '';
-      (dashboardData.hotkeys || []).forEach(h => hkHtml += `• [Global] <b>${h.key}</b> ${describe(h)}<br>`);
-      (dashboardData.longHotkeys || []).forEach(h => hkHtml += `• [Global, long] <b>${h.key}</b> ${describe(h)}<br>`);
-      (page.hotkeys || []).forEach(h => hkHtml += `• [Page] <b>${h.key}</b> ${describe(h)}<br>`);
-      (page.longHotkeys || []).forEach(h => hkHtml += `• [Page, long] <b>${h.key}</b> ${describe(h)}<br>`);
+      (dashboardData.hotkeys || []).forEach(h => hkHtml += `• [Global] <b>${h.key}</b> ${describeHotkey(h)}<br>`);
+      (dashboardData.longHotkeys || []).forEach(h => hkHtml += `• [Global, long] <b>${h.key}</b> ${describeHotkey(h)}<br>`);
+      (page.hotkeys || []).forEach(h => hkHtml += `• [Page] <b>${h.key}</b> ${describeHotkey(h)}<br>`);
+      (page.longHotkeys || []).forEach(h => hkHtml += `• [Page, long] <b>${h.key}</b> ${describeHotkey(h)}<br>`);
       hkHtml += `</div>`;
       hkInfo.innerHTML = hkHtml;
     } else {
@@ -990,6 +989,32 @@ function renderPreview() {
             <div style="position:absolute; left:0; right:0; bottom:0; padding:8px 12px; background:linear-gradient(to top, rgba(0,0,0,.75), transparent); color:#fff; font-weight:600; font-size:13px;">${title}</div>
           </div>
           <div class="hint" style="margin-top:6px">Entity: ${o.entity_id || 'camera.entity'} · ${canFetch ? 'live frame from this device' : "placeholder here — a real still shows when opened from your device's /builder/"} · on the remote: ${mode === 'stream' ? 'live MJPEG stream (auto-falls-back to stills)' : 'still snapshot refresh'}</div>
+        </div>`;
+    } else if (card.type === 'plex') {
+      const o = card.options || {};
+      const rows = [];
+      if (o.show_on_deck !== false) rows.push({ label: 'On Deck', items: PLEX_MOCK.on_deck });
+      if (o.show_recently_added_movies !== false) rows.push({ label: 'Recently Added Movies', items: PLEX_MOCK.recently_added_movies });
+      if (o.show_recently_added_shows !== false) rows.push({ label: 'Recently Added TV', items: PLEX_MOCK.recently_added_shows });
+      const rowsHtml = rows.length
+        ? rows.map(row => `
+          <div style="margin-top:8px">
+            <div style="color:#9FB6BD; font-size:12px; margin-bottom:6px;">${row.label}</div>
+            <div style="display:flex; gap:8px; overflow:hidden;">
+              ${row.items.map(item => `
+                <div style="width:64px; flex-shrink:0;">
+                  <div style="width:64px; height:96px; border-radius:8px; background:#1B2027;"></div>
+                  <div style="margin-top:4px; font-size:10px; color:#E6EEF2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${item.title}</div>
+                  <div style="font-size:9px; color:#748790; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${item.subtitle}</div>
+                </div>`).join('')}
+            </div>
+          </div>`).join('')
+        : `<div class="hint" style="margin-top:6px">No rows enabled — edit the card to turn at least one on.</div>`;
+      cardEl.innerHTML = `
+        <div class="card">
+          <div class="card-title"><span>plex</span><span><span class="remove" style="color:#00E5FF" onclick="editCard(${idx})">✎</span> <span class="remove" onclick="removeCard(${idx})">✕</span></span></div>
+          ${rowsHtml}
+          <div class="hint" style="margin-top:8px">Titles/posters shown here are placeholders — real Plex data loads live on the device. Server: ${o.host || '(not set)'} · Playback entity: ${o.media_entity || '(not set)'}${o.play_entity ? ' · Direct client: ' + o.play_entity : ''} · ${o.items_per_row ?? 12} items/row.</div>
         </div>`;
     } else {
       cardEl.className = 'card';

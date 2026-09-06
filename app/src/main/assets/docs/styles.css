@@ -4,7 +4,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   .layout { display: flex; gap: 20px; align-items: flex-start; }
   .editor-pane, .preview-pane { flex: 1; background: #1e1e1e; border: 1px solid #333; border-radius: 12px; padding: 20px; min-width: 0; }
   .preview-pane { position: sticky; top: 20px; background: #181818; }
+  .beta-switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+  .beta-switch input { opacity: 0; width: 0; height: 0; }
+  .beta-slider { position: absolute; inset: 0; background-color: #555; transition: .2s; border-radius: 22px; cursor: pointer; }
+  .beta-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: #fff; transition: .2s; border-radius: 50%; }
+  .beta-switch input:checked + .beta-slider { background-color: #00E5FF; }
+  .beta-switch input:checked + .beta-slider:before { transform: translateX(18px); }
   h2 { color: #00E5FF; font-size: 1.05rem; margin: 24px 0 10px; }
+  .subsection-title { color: #ccc; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; margin: 20px 0 8px; padding-top: 14px; border-top: 1px solid #383838; }
+  .subsection-title:first-child { margin-top: 0; padding-top: 0; border-top: none; }
   h2:first-child { margin-top: 0; }
   label { font-size: 0.8rem; color: #aaa; display: block; margin: 8px 0 4px; }
   input, select, textarea { width: 100%; padding: 8px; background: #2d2d2d; border: 1px solid #444; color: #fff; border-radius: 6px; box-sizing: border-box; font-size: 0.88rem; }
@@ -90,6 +98,55 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   #jsonOutput { height: 260px; margin-top: 8px; color: #00ff66; }
   .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
   .btn-row button { margin-top: 0; }
+
+  /* ---- Devices home: hero + category tiles ------------------------------ */
+  .hub-hero { text-align: center; padding: 8px 0 32px; }
+  .hub-hero img { width: 80px; height: 80px; display: block; margin: 0 auto 16px; animation: hub-hero-in 700ms ease-out; }
+  .hub-hero h1 { font-size: 1.8rem; margin: 0 0 8px; }
+  .hub-hero .subtitle { margin-bottom: 0; font-size: 0.95rem; }
+  @keyframes hub-hero-in {
+    from { opacity: 0; transform: scale(0.85); filter: drop-shadow(0 0 0 rgba(0,229,255,0)); }
+    60% { filter: drop-shadow(0 0 22px rgba(0,229,255,0.55)); }
+    to { opacity: 1; transform: scale(1); filter: drop-shadow(0 0 0 rgba(0,229,255,0)); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .hub-hero img { animation: none; }
+  }
+
+  .tile-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 28px; }
+  @media (min-width: 480px) {
+    .tile-grid { grid-template-columns: repeat(4, 1fr); }
+  }
+  .tile {
+    background: #1a1a1a; border: 1px solid #333; border-radius: 14px; padding: 22px 18px;
+    text-align: left; cursor: pointer; font-family: inherit; color: inherit;
+    display: flex; flex-direction: column; gap: 12px; transition: border-color 150ms, transform 150ms;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tile:hover { transform: translateY(-2px); }
+  .tile:active { transform: scale(0.97); }
+  .tile .tile-icon { width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.3rem; }
+  .tile .tile-name { font-size: 1.02rem; font-weight: 600; color: #f0f0f0; }
+  .tile .tile-count { font-size: 0.78rem; color: #999; }
+  .tile.tile-ha { border-color: #244045; } .tile.tile-ha:hover, .tile.tile-ha:focus-visible { border-color: #00E5FF; }
+  .tile.tile-ha .tile-icon { background: rgba(0,229,255,0.14); color: #00E5FF; }
+  .tile.tile-harmony { border-color: #3d3323; } .tile.tile-harmony:hover, .tile.tile-harmony:focus-visible { border-color: #FFB74D; }
+  .tile.tile-harmony .tile-icon { background: rgba(255,183,77,0.14); color: #FFB74D; }
+  .tile.tile-ir { border-color: #3d2333; } .tile.tile-ir:hover, .tile.tile-ir:focus-visible { border-color: #FF4FA3; }
+  .tile.tile-ir .tile-icon { background: rgba(255,79,163,0.14); color: #FF4FA3; }
+  .tile.tile-appletv { opacity: 0.6; cursor: default; }
+  .tile.tile-appletv .tile-icon { background: rgba(216,216,216,0.1); color: #d8d8d8; }
+
+  .utility-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 28px; }
+  .utility-row a, .utility-row button.link-btn {
+    font-size: 0.78rem; color: #999; background: none; border: none; padding: 4px 2px;
+    text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font-family: inherit;
+  }
+  .utility-row a:hover, .utility-row button.link-btn:hover { color: #ccc; }
+
+  .category-view { display: none; }
+  .back-link { display: inline-flex; align-items: center; gap: 6px; color: #999; text-decoration: none; font-size: 0.85rem; margin-bottom: 16px; cursor: pointer; background: none; border: none; font-family: inherit; padding: 0; }
+  .back-link:hover { color: #eee; }
 
   /* Toggle switches instead of native checkboxes — same HTML (plain
      <input type="checkbox">), just restyled, so every existing checkbox in

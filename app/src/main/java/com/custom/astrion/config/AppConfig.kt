@@ -161,20 +161,49 @@ data class HotkeyConfig(
 }
 
 /**
- * A local IR device: a stable id/name plus a registry of named commands
- * (freq+pattern already resolved from Pronto Hex by the web builder, either
- * from `ir-database/` or pasted in by hand — the app never parses a
- * protocol or touches `docs/ir-database/` itself). The offline, no-hub,
- * no-cloud equivalent of a Harmony device: works even if every cloud
- * service disappears overnight.
+ * A local IR device: a stable id/name plus a [source] telling the app
+ * where its named commands come from. The offline, no-hub, no-cloud
+ * equivalent of a Harmony device: works even if every cloud service
+ * disappears overnight.
  */
 @Suppress("Unused")
 data class IrDeviceConfig(
     val id: String,
     val name: String = id,
-    /** commandId (freeform, e.g. "power", "volume_up", "hdmi1") -> resolved IR frame. */
-    val commands: Map<String, IrStepConfig>
+    val source: IrDeviceSource
 )
+
+/**
+ * Where an [IrDeviceConfig]'s commands come from.
+ *
+ * - [Inline]: freq+pattern already resolved from a hand-pasted Pronto Hex
+ *   code, embedded directly in dashboard.json. For one-off buttons not
+ *   (yet) in any curated database — e.g. straight out of the sniffer's
+ *   Learning Mode.
+ * - [SdCardRef]: a pointer into `/sdcard/astrion/ir-database/<category>.json`
+ *   (see IrDatabaseRuntime.kt) — the curated files the ir-database picker
+ *   (a separate static site, not bundled with this app) generates. Pronto
+ *   is resolved here at runtime, on first use, and cached — dashboard.json
+ *   itself only ever carries the *reference*, never the raw codes, so a
+ *   community database update doesn't require re-touching every dashboard
+ *   built against it.
+ */
+@Suppress("Unused")
+sealed class IrDeviceSource {
+    data class Inline(
+        /** commandId (freeform, e.g. "power", "volume_up", "hdmi1") -> resolved IR frame. */
+        val commands: Map<String, IrStepConfig>
+    ) : IrDeviceSource()
+
+    data class SdCardRef(
+        /** Matches an ir-database category id, e.g. "tv", "ac" — also the filename stem. */
+        val category: String,
+        /** Matches a `brand_name` in that category's file, case-insensitively. */
+        val brand: String,
+        /** Matches a `model_name` under that brand, case-insensitively. */
+        val model: String
+    ) : IrDeviceSource()
+}
 
 /** One IR transmission: `freq` (Hz) + `pattern` (alternating on/off
  * durations in µs) map straight onto `ConsumerIrManager.transmit()`. */

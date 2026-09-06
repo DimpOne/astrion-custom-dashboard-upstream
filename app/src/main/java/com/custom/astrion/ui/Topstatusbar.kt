@@ -117,9 +117,10 @@ fun TopStatusBar(onSwipeDownToSettings: () -> Unit) {
 }
 
 /** Simple hand-drawn battery glyph (outline + fill + nub) — avoids depending
- * on the extended Material icon pack, which may not be on the classpath. */
+ * on the extended Material icon pack, which may not be on the classpath.
+ * Also used, at a much larger size, by [ChargingScreen]. */
 @Composable
-private fun batteryGlyph(percent: Int, charging: Boolean) {
+fun batteryGlyph(percent: Int, charging: Boolean, modifier: Modifier = Modifier.size(width = 20.dp, height = 11.dp)) {
     val theme = LocalTheme.current
     val fillColor =
         when {
@@ -127,7 +128,7 @@ private fun batteryGlyph(percent: Int, charging: Boolean) {
             percent <= 15 -> theme.danger
             else -> theme.mutedText
         }
-    Canvas(modifier = Modifier.size(width = 20.dp, height = 11.dp)) {
+    Canvas(modifier = modifier) {
         val bodyWidth = size.width * 0.85f
         val nubWidth = size.width - bodyWidth
         val strokeWidth = 1.2.dp.toPx()
@@ -215,8 +216,9 @@ private fun rememberWifiConnected(context: Context): Boolean {
     return connected
 }
 
+/** Live (percent, isCharging) — shared by [TopStatusBar] and [ChargingScreen]. */
 @Composable
-private fun rememberBatteryState(context: Context): Pair<Int, Boolean> {
+fun rememberBatteryState(context: Context): Pair<Int, Boolean> {
     var percent by remember { mutableIntStateOf(100) }
     var charging by remember { mutableStateOf(false) }
     DisposableEffect(Unit) {

@@ -16,9 +16,16 @@
     <string name="wake_on_motion">Réveil au mouvement</string>
     <string name="config_server_toggle">Serveur de configuration local</string>
     <string name="config_server_toggle_hint">Désactive aussi /builder/, l\'upload d\'icônes et l\'envoi/téléchargement de dashboard.json. Réactive-le ici pour reconfigurer.</string>
+    <string name="wifi_keep_awake">Garder le Wi-Fi éveillé</string>
+    <string name="wifi_keep_awake_hint">Désactivé par défaut. Corrige les échecs occasionnels de Home Assistant à joindre cet appareil (services, push) écran éteint — coûte un peu de batterie, car empêche la radio Wi-Fi d\'entrer en veille.</string>
     <string name="config_server_off_hint">Serveur de configuration local désactivé</string>
+    <string name="tap_feedback">Retour tactile</string>
+    <string name="tap_feedback_hint">Léger clic sonore quand vous tapotez une scène, un bouton ou un point — identique aux menus Android de l\'appareil.</string>
     <string name="brightness">Luminosité</string>
     <string name="allow_brightness_write">Autoriser la modification (appuyer)</string>
+    <string name="settings_update_available">Mise à jour disponible : v%1$s</string>
+    <string name="settings_beta_update_available">Bêta disponible : %1$s</string>
+    <string name="settings_local_config">Configuration locale : %1$s</string>
 
     <!-- Web Config: Header & General -->
     <string name="web_config_title">Astrion Custom — Configuration locale</string>
@@ -33,6 +40,8 @@
     <string name="web_config_ha_heading">Home Assistant</string>
     <string name="web_config_ha_url_label">URL Home Assistant</string>
     <string name="web_config_ha_token_label">Jeton d\'accès longue durée Home Assistant</string>
+    <string name="web_config_ha_webhook_label">ID webhook (optionnel — push instantané au lieu du polling)</string>
+    <string name="web_config_ha_webhook_hint">Si votre intégration Home Assistant compagnon enregistre un webhook, collez son id ici pour qu\'Astrion envoie la page en cours et l\'Activité active dès qu\'elles changent, plutôt que Home Assistant ait à les interroger périodiquement. Laissez vide pour rester en polling uniquement — tout continue de fonctionner dans les deux cas.</string>
 
     <!-- Web Config: Harmony Hubs -->
     <string name="web_config_harmony_heading">Hubs Harmony</string>
@@ -61,6 +70,33 @@
     <string name="web_config_icons_note">Enregistrée dans /sdcard/astrion/icons/&lt;nom&gt; — à référencer dans dashboard.json en tant que \"/sdcard/astrion/icons/&lt;nom&gt;\".</string>
     <string name="web_config_icon_uploaded">Icône envoyée</string>
 
+    <!-- Web Config: IR Database -->
+    <string name="web_config_ir_database_heading">Appareils IR</string>
+    <string name="web_config_ir_database_sub">Référencez un appareil depuis le sélecteur ir-database dans l\'éditeur de dashboard, ou envoyez ses fichiers ici pour qu\'il fonctionne immédiatement.</string>
+    <string name="web_config_ir_database_picker_link">Choisir mes appareils IR \u2192</string>
+    <string name="web_config_ir_database_upload_button">Envoyer un fichier ir-database</string>
+    <string name="web_config_ir_database_note">Enregistré dans /sdcard/astrion/ir-database/&lt;catégorie&gt;.json — pris en compte immédiatement, pas besoin de redémarrer.</string>
+    <string name="web_config_ir_database_uploaded">Fichier ir-database envoyé</string>
+
+    <!-- Charging screen -->
+    <string name="charging_screen_charging">En charge</string>
+    <string name="charging_screen_full">Chargée</string>
+
+    <!-- Web Config: Find my remote (ring) -->
+    <string name="web_config_ring_heading">Où est ma télécommande</string>
+    <string name="web_config_ring_sub">Teste le son et le volume de la sonnerie directement ici, avant de la configurer dans Home Assistant.</string>
+    <string name="web_config_ring_volume_label">Volume</string>
+    <string name="web_config_ring_sound_label">Son</string>
+    <string name="web_config_ring_sound_ringtone">Sonnerie</string>
+    <string name="web_config_ring_sound_alarm">Alarme</string>
+    <string name="web_config_ring_sound_notification">Notification</string>
+    <string name="web_config_ring_duration_label">Durée (secondes)</string>
+    <string name="web_config_ring_button">Sonner</string>
+    <string name="web_config_ring_stop_button">Arrêter</string>
+    <string name="web_config_ring_status_ringing">Ça sonne…</string>
+    <string name="web_config_ring_status_stopped">Arrêté</string>
+    <string name="web_config_ring_status_error">Impossible de sonner :</string>
+
     <!-- Web Config: OTA / Updates -->
     <string name="web_config_updates_heading">Mises à jour</string>
     <string name="web_config_current_version">Version actuelle</string>
@@ -71,6 +107,37 @@
     <string name="web_config_update_installing">Installation lancée — validez l\'invite sur l\'écran du panneau</string>
     <string name="web_config_update_needs_permission">Autorisez « Installer des applications inconnues » pour cette app sur l\'écran qui vient de s\'ouvrir, puis appuyez de nouveau sur Télécharger &amp; installer.</string>
     <string name="web_config_update_failed">Échec de la vérification : %1$s</string>
+
+    <!-- Connection status -->
+    <string name="connection_connecting">Connexion…</string>
+    <string name="connection_auth_failed">Échec de l\'authentification — vérifiez le jeton</string>
+    <string name="connection_error_retrying">Erreur de connexion — nouvelle tentative</string>
+
+    <!-- Unknown card -->
+    <string name="unknown_card_type">Type de carte inconnu : "%1$s"</string>
+
+    <!-- Media (player, Plex, browser) -->
+    <string name="media_loading">Chargement…</string>
+    <string name="media_loading_more">Chargement de la suite…</string>
+    <string name="media_no_items">Aucun élément</string>
+    <string name="media_nothing_here">Rien ici</string>
+    <string name="media_default_title">Médias</string>
+    <string name="media_load_timeout">Impossible de charger les médias (délai dépassé)</string>
+    <string name="media_load_failed">Impossible de charger les médias</string>
+    <string name="media_browse">Parcourir</string>
+    <string name="media_power_toggle">Basculer</string>
+    <string name="plex_error_no_items">Plex n\'a renvoyé aucun élément</string>
+    <string name="plex_error_generic">Erreur Plex</string>
+    <string name="plex_library">Bibliothèque</string>
+    <string name="plex_this_season">Cette saison</string>
+    <string name="plex_play">Lire</string>
+    <string name="plex_episode">Ép. %1$s · %2$s</string>
+
+    <!-- Select cards -->
+    <string name="select_no_options">Aucune option</string>
+    <string name="select_choose">Sélectionner…</string>
+    <string name="source_no_sources">Aucune source (appareil éteint ?)</string>
+    <string name="source_choose">Sélectionner une source…</string>
 
     <!-- ClimateCard -->
     <string name="climate_current_temp">Actuellement %1$s°</string>
@@ -86,6 +153,8 @@
 
     <!-- VacuumCard -->
     <string name="vacuum_fan_speed_caption">Mode de nettoyage</string>
+    <string name="vacuum_default_name">Aspirateur robot</string>
+    <string name="vacuum_map_label">Carte de l\'aspirateur robot</string>
 
     <!-- CoverCard -->
     <string name="cover_open">Ouvert</string>

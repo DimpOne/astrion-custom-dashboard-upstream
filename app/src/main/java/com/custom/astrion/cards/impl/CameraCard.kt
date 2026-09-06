@@ -1,6 +1,5 @@
 package com.custom.astrion.cards.impl
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -33,10 +32,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,6 +45,7 @@ import androidx.compose.ui.window.Dialog
 import com.custom.astrion.cards.CardConfig
 import com.custom.astrion.cards.CardContext
 import com.custom.astrion.cards.CardRenderer
+import com.custom.astrion.ui.decodeByteArraySampled
 import com.custom.astrion.ui.icons.MdiIcons
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
@@ -118,11 +119,29 @@ class CameraCard : CardRenderer {
         var live by remember(entityId, mode) { mutableStateOf(false) }
         var showMaximized by remember { mutableStateOf(false) }
 
-        LaunchedEffect(entityId, mode) {
+        // Target decode size: the card is fillMaxWidth, so the screen width
+        // in px is a close match. Downsample 720p/1080p MJPEG frames to this
+        // instead of decoding at full source resolution every frame.
+        val targetPx = with(LocalDensity.current) {
+            LocalConfiguration.current.screenWidthDp.dp.toPx()
+        }.toInt()
+
+        LaunchedEffect(entityId, mode, ctx.screenOn) {
             if (entityId.isNullOrBlank()) {
                 error = true
                 return@LaunchedEffect
             }
+
+            // Screen off: don't stream or poll — this card has no viewer to
+            // show frames to, and both modes would otherwise happily burn CPU
+            // (JPEG decode) and keep the WiFi radio out of deep sleep all
+            // night on whatever page was left on screen (this is exactly what
+            // drained a full charge overnight before this check existed).
+            // The last decoded `frame` is left in place so the card resumes
+            // showing something immediately once the screen — and this
+            // LaunchedEffect, re-keyed on ctx.screenOn flipping back to true —
+            // comes back.
+            if (!ctx.screenOn) return@LaunchedEffect
 
             // A blocking input.read() on a silent MJPEG stream won't notice
             // coroutine cancellation on its own, so when this effect is disposed
@@ -174,7 +193,7 @@ class CameraCard : CardRenderer {
                         try {
                             resp.use { r ->
                                 if (!r.isSuccessful || r.body == null) return@runCatching false
-                                readMjpeg(r) { bmp ->
+                                readMjpeg(r, targetPx) { bmp ->
                                     frame = bmp
                                     error = false
                                     live = true
@@ -388,7 +407,7 @@ class CameraCard : CardRenderer {
      * Decoding happens on the IO dispatcher; only the tiny state write hops to
      * Main. Returns when the stream ends or the coroutine is cancelled.
      */
-    private suspend fun readMjpeg(resp: Response, onFrame: (ImageBitmap) -> Unit) {
+    private suspend fun readMjpeg(resp: Response, targetPx: Int, onFrame: (ImageBitmap) -> Unit) {
         withContext(Dispatchers.IO) {
             val input = BufferedInputStream(resp.body!!.byteStream(), 64 * 1024)
             val jpeg = ByteArrayOutputStream(96 * 1024)
@@ -408,13 +427,8 @@ class CameraCard : CardRenderer {
                             val bytes = jpeg.toByteArray()
                             jpeg.reset()
                             inFrame = false
-                            val bmp =
-                                try {
-                                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                                } catch (e: Exception) {
-                                    null
-                                }
-                            if (bmp != null) withContext(Dispatchers.Main) { onFrame(bmp.asImageBitmap()) }
+                            val bmp = decodeByteArraySampled(bytes, targetPx)
+                            if (bmp != null) withContext(Dispatchers.Main) { onFrame(bmp) }
                         }
                     } else if (prev == 0xFF && b == 0xD8) {
                         inFrame = true

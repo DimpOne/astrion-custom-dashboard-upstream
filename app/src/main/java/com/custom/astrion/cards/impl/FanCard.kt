@@ -1,7 +1,6 @@
 package com.custom.astrion.cards.impl
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +34,7 @@ import com.custom.astrion.cards.CardRenderer
 import com.custom.astrion.ha.HaLabels
 import com.custom.astrion.ha.ServiceCall
 import com.custom.astrion.ui.ThemeColors
+import com.custom.astrion.ui.tapClickable
 
 /**
  * Fan card. Two layouts, auto-picked from what the entity actually reports
@@ -175,7 +175,7 @@ class FanCard : CardRenderer {
                     modifier =
                     Modifier
                         .weight(1f)
-                        .clickable { ctx.client.toggle(entityId) }
+                        .tapClickable { ctx.client.toggle(entityId) }
                 ) {
                     Text(name, color = ctx.theme.primaryText, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     Text(
@@ -214,7 +214,7 @@ class FanCard : CardRenderer {
                         .size(36.dp)
                         .clip(CircleShape)
                         .background(if (on) ctx.theme.success.copy(alpha = 0.25f) else ctx.theme.danger.copy(alpha = 0.25f))
-                        .clickable { ctx.client.toggle(entityId) },
+                        .tapClickable { ctx.client.toggle(entityId) },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -307,7 +307,7 @@ private fun FanChip(label: String, selected: Boolean, modifier: Modifier, theme:
             .height(34.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(if (selected) theme.accentSecondary else theme.controlBackground)
-            .clickable(onClick = onClick),
+            .tapClickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -341,7 +341,7 @@ private fun CircleBtn(icon: ImageVector, theme: ThemeColors, onClick: () -> Unit
             .size(44.dp)
             .clip(CircleShape)
             .background(theme.controlBackground)
-            .clickable(onClick = onClick),
+            .tapClickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, contentDescription = null, tint = theme.iconTint)
@@ -357,7 +357,7 @@ private fun StepBtn(label: String, theme: ThemeColors, onClick: () -> Unit) {
             .size(44.dp)
             .clip(CircleShape)
             .background(theme.insetSurface)
-            .clickable(onClick = onClick),
+            .tapClickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Text(

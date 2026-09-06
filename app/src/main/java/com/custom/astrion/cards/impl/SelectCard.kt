@@ -1,7 +1,6 @@
 package com.custom.astrion.cards.impl
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -37,10 +37,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.toColorInt
+import com.custom.astrion.R
 import com.custom.astrion.cards.CardConfig
 import com.custom.astrion.cards.CardContext
 import com.custom.astrion.cards.CardRenderer
 import com.custom.astrion.ha.ServiceCall
+import com.custom.astrion.ui.tapClickable
 
 /**
  * Generic picker for any `input_select.*` or `select.*` entity — an
@@ -90,7 +92,12 @@ class SelectCard : CardRenderer {
         // shape to account for: state is always one of `options`, or
         // "unavailable"/"unknown" if the entity itself is down.
         val current = e?.state
-        val stateLabel = current ?: if (options.isEmpty()) "No options" else "Select…"
+        val stateLabel =
+            current ?: if (options.isEmpty()) {
+                stringResource(R.string.select_no_options)
+            } else {
+                stringResource(R.string.select_choose)
+            }
 
         val iconColor = config.string("icon_color")?.let(::parseHexColor)
 
@@ -185,7 +192,7 @@ private fun SelectMenuControl(current: String?, options: List<String>, fillWidth
                 .height(36.dp)
                 .clip(RoundedCornerShape(18.dp))
                 .background(Color(0xFF152B33))
-                .clickable(enabled = options.isNotEmpty()) { expanded = true }
+                .tapClickable(enabled = options.isNotEmpty()) { expanded = true }
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween

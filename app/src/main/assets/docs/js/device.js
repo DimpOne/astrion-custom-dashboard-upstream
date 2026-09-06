@@ -1,11 +1,12 @@
 // ---- Load / Save directly to this device ------------------------------------
 //
-// When this builder is served by the app itself (http://<device-ip>:8080/builder/),
-// these read/write dashboard.json straight from/to the device instead of the
-// paste/download flow. Fails silently when opened elsewhere (GitHub Pages, a
-// plain static file server) — paste + download keeps working as before there.
+// The builder only exists served by the app itself, at http://<device-ip>:8080/builder/
+// — there's no standalone/offline mode. dashboard.json is auto-loaded on open,
+// and "Save to device" applies changes live. The paste/download box above stays
+// as a manual override (importing a shared config, or a plain-text backup),
+// not a fallback for a missing connection.
 
-let deviceModeAvailable = false; // true once we've confirmed we're being served by the app
+let deviceModeAvailable = false; // true once dashboard.json has actually loaded — used to gate "Save to device" while that first fetch is in flight
 
 // Slide-up toast notification. Replaces the blocking alert() that "Save to
 // device" used to pop — non-modal, auto-dismisses (3s success / 5s error),
@@ -39,7 +40,8 @@ async function loadDashboardFromDevice() {
     }
   } catch (e) {
     deviceModeAvailable = false;
-    console.log('Not served by the app (or offline) — using the paste/download flow instead.', e);
+    showToast("Couldn't reach this device — check the connection, then reload this page.", 'error');
+    console.error('Failed to load dashboard.json from this device.', e);
   }
   updateDeviceModeUi();
 }
@@ -48,9 +50,9 @@ async function loadDashboardFromDevice() {
  * Fetches a snapshot of every HA entity the device currently knows, exposed
  * by the app at /ha-states. Sets the global `haStates` (declared in preview.js)
  * so the card renderers can use live state/names/attributes instead of the
- * static *_MOCK examples. Failures are swallowed: on GitHub Pages or when HA
- * is unreachable, haStates stays null and the preview quietly falls back to
- * the mocks + prettyEntityName().
+ * static *_MOCK examples. Failures are swallowed: when Home Assistant isn't
+ * configured or isn't reachable right now, haStates stays null and the
+ * preview quietly falls back to the mocks + prettyEntityName().
  */
 async function loadHaStates() {
   try {
@@ -80,6 +82,8 @@ function applyParsedDashboard(parsed) {
     hotkeys: parsed.hotkeys || [],
     longHotkeys: parsed.longHotkeys || [],
     irDevices: parsed.irDevices || [],
+    haDevices: parsed.haDevices || [],
+    harmonyAliases: parsed.harmonyAliases || {},
     activities: parsed.activities || [],
     theme: parsed.theme || {},
   };
@@ -122,7 +126,7 @@ function updateDeviceModeUi() {
     banner.style.display = 'block';
     banner.textContent = deviceModeAvailable
       ? '✓ Connected to this device — dashboard.json was loaded automatically, and "Save to device" applies changes live.'
-      : 'Not connected to a device — use "Load" (paste) and "Download" below, or open this page from your device\'s own /builder/ URL.';
+      : 'Connecting to this device…';
   }
   if (saveBtn) saveBtn.style.display = deviceModeAvailable ? 'inline-block' : 'none';
 }

@@ -1,7 +1,7 @@
 package com.custom.astrion.cards.impl
 
+import android.content.Context
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,13 +34,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.custom.astrion.R
 import com.custom.astrion.ha.HaClient
 import com.custom.astrion.ui.ThemeColors
+import com.custom.astrion.ui.tapClickable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -55,6 +59,33 @@ private data class MediaItem(
     val canPlay: Boolean
 )
 
+private class BrowserUiState {
+    var title by mutableStateOf<String?>(null)
+    var items by mutableStateOf<List<MediaItem>?>(null)
+    var error by mutableStateOf<String?>(null)
+}
+
+private suspend fun loadFolder(context: Context, client: HaClient, entityId: String, cid: String?, ctype: String?, state: BrowserUiState) {
+    state.items = null
+    state.error = null
+    try {
+        val result = client.browseMedia(entityId, cid, ctype)
+        if (result == null) {
+            state.error = context.getString(R.string.media_load_timeout)
+            state.items = emptyList()
+        } else {
+            state.title = (result["title"] as? JsonPrimitive)?.content
+            state.items = (result["children"] as? JsonArray)?.mapNotNull { parseItem(it as? JsonObject) } ?: emptyList()
+        }
+    } catch (ex: Exception) {
+        // Some media_player integrations return an unexpected shape for a given
+        // folder (e.g. a non-object "result") — surface it instead of letting
+        // it crash the whole app.
+        state.error = ex.message ?: context.getString(R.string.media_load_failed)
+        state.items = emptyList()
+    }
+}
+
 /**
  * Modal media browser over `media_player/browse_media`. Drill into expandable
  * folders (with a back button), tap a playable item to play it and close.
@@ -64,82 +95,86 @@ private data class MediaItem(
 fun MediaBrowser(entityId: String, client: HaClient, theme: ThemeColors = ThemeColors.Default, onClose: () -> Unit) {
     // Navigation stack of (contentId, contentType); root is (null, null).
     val stack = remember { mutableStateListOf<Pair<String?, String?>>(null to null) }
-    var title by remember { mutableStateOf("Media") }
-    var items by remember { mutableStateOf<List<MediaItem>?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
+    val state = remember { BrowserUiState() }
 
     // Reload whenever the depth changes (push/pop).
+    val context = LocalContext.current
     androidx.compose.runtime.LaunchedEffect(stack.size) {
-        items = null
-        error = null
         val (cid, ctype) = stack.last()
-        val result = client.browseMedia(entityId, cid, ctype)
-        if (result == null) {
-            error = "Couldn't load media (timeout)"
-            items = emptyList()
-        } else {
-            title = (result["title"] as? JsonPrimitive)?.content ?: "Media"
-            items = (result["children"] as? JsonArray)?.mapNotNull { parseItem(it as? JsonObject) } ?: emptyList()
-        }
+        loadFolder(context, client, entityId, cid, ctype, state)
     }
 
     Dialog(onDismissRequest = onClose) {
-        Column(
-            modifier =
-            Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.85f)
-                .clip(RoundedCornerShape(18.dp))
-                .background(theme.cardSurface)
-                .padding(12.dp)
-        ) {
-            // Header: back (when nested), title, close.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (stack.size > 1) {
-                    IconBtn(Icons.Filled.ArrowBack, theme) { if (stack.size > 1) stack.removeAt(stack.size - 1) }
-                    Spacer(Modifier.width(6.dp))
-                }
-                Text(
-                    title,
-                    color = theme.primaryText,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                IconBtn(Icons.Filled.Close, theme, onClick = onClose)
-            }
-            Spacer(Modifier.height(8.dp))
+        MediaBrowserBody(entityId, client, theme, stack, state, onClose)
+    }
+}
 
-            when {
-                items == null ->
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = theme.accent)
-                    }
-                error != null ->
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(error!!, color = theme.danger, fontSize = 14.sp)
-                    }
-                items!!.isEmpty() ->
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Nothing here", color = theme.mutedText, fontSize = 14.sp)
-                    }
-                else ->
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        items(items!!) { item ->
-                            MediaRow(item, theme) {
-                                when {
-                                    item.canExpand -> stack.add(item.contentId to item.contentType)
-                                    item.canPlay -> {
-                                        client.playMedia(entityId, item.contentId, item.contentType)
-                                        onClose()
-                                    }
+@Composable
+private fun MediaBrowserBody(
+    entityId: String,
+    client: HaClient,
+    theme: ThemeColors,
+    stack: MutableList<Pair<String?, String?>>,
+    state: BrowserUiState,
+    onClose: () -> Unit
+) {
+    Column(
+        modifier =
+        Modifier
+            .fillMaxWidth()
+            .fillMaxHeight(0.85f)
+            .clip(RoundedCornerShape(18.dp))
+            .background(theme.cardSurface)
+            .padding(12.dp)
+    ) {
+        // Header: back (when nested), title, close.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (stack.size > 1) {
+                IconBtn(Icons.Filled.ArrowBack, theme) { if (stack.size > 1) stack.removeAt(stack.size - 1) }
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(
+                state.title ?: stringResource(R.string.media_default_title),
+                color = theme.primaryText,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            IconBtn(Icons.Filled.Close, theme, onClick = onClose)
+        }
+        Spacer(Modifier.height(8.dp))
+
+        val items = state.items
+        val error = state.error
+        when {
+            items == null ->
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = theme.accent)
+                }
+            error != null ->
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(error, color = theme.danger, fontSize = 14.sp)
+                }
+            items.isEmpty() ->
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(stringResource(R.string.media_nothing_here), color = theme.mutedText, fontSize = 14.sp)
+                }
+            else ->
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    items(items) { item ->
+                        MediaRow(item, theme) {
+                            when {
+                                item.canExpand -> stack.add(item.contentId to item.contentType)
+                                item.canPlay -> {
+                                    client.playMedia(entityId, item.contentId, item.contentType)
+                                    onClose()
                                 }
                             }
                         }
                     }
-            }
+                }
         }
     }
 }
@@ -151,7 +186,7 @@ private fun MediaRow(item: MediaItem, theme: ThemeColors, onClick: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
+            .tapClickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -177,7 +212,7 @@ private fun IconBtn(icon: androidx.compose.ui.graphics.vector.ImageVector, theme
         modifier =
         Modifier
             .size(40.dp)
-            .clickable(onClick = onClick),
+            .tapClickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, contentDescription = null, tint = theme.iconTint)

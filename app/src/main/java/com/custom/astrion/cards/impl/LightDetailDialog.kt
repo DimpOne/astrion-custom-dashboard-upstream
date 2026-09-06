@@ -1,7 +1,6 @@
 package com.custom.astrion.cards.impl
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +37,7 @@ import com.custom.astrion.ha.EntityState
 import com.custom.astrion.ha.HaClient
 import com.custom.astrion.ha.ServiceCall
 import com.custom.astrion.ui.ThemeColors
+import com.custom.astrion.ui.tapClickable
 import kotlin.math.roundToInt
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
@@ -165,7 +165,7 @@ fun LightDetailDialog(
                     .size(48.dp)
                     .clip(CircleShape)
                     .background(if (on) theme.amber else theme.controlBackground)
-                    .clickable { client.toggle(entityId) },
+                    .tapClickable { client.toggle(entityId) },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -199,7 +199,7 @@ fun LightDetailDialog(
                                     .size(36.dp)
                                     .clip(CircleShape)
                                     .background(Color(r, g, b))
-                                    .clickable { setRgb(r, g, b) }
+                                    .tapClickable { setRgb(r, g, b) }
                             )
                         }
                     }
@@ -215,7 +215,7 @@ fun LightDetailDialog(
                             Modifier
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(theme.controlBackground)
-                                .clickable { setKelvin(k) }
+                                .tapClickable { setKelvin(k) }
                                 .padding(horizontal = 12.dp, vertical = 8.dp)
                         ) {
                             Text(label, color = theme.iconTint, fontSize = 12.sp)
