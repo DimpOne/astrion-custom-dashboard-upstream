@@ -35,6 +35,12 @@
             </div>
         </div>
 
+        <div class="hint" style="margin-bottom:20px">
+            Home Assistant, Harmony Hub(s), and IR Devices are configured once from
+            this device's home page (<a href="/" style="color:#00E5FF">open it</a>) —
+            everything below just references them by name.
+        </div>
+
         <h2>1. Hotkeys</h2>
         <div class="section-box">
             <label>Scope</label>
@@ -79,73 +85,7 @@
             <div id="hotkeysList" style="margin-top:12px"></div>
         </div>
 
-        <h2>2. IR Devices</h2>
-        <div class="section-box">
-            <div class="hint">
-                A registry of named IR commands per physical device — works fully offline,
-                no Harmony hub, no Home Assistant, no cloud. Used by scene_grid tiles
-                (IR device + command) and by Activities' IR-sourced devices below.
-            </div>
-
-            <label>Device name</label>
-            <input type="text" id="irDevName" placeholder="e.g., TV Salon">
-
-            <label style="margin-top:10px">Where do this device's commands come from?</label>
-            <label class="inline-check">
-                <input type="radio" name="irSourceMode" value="inline" checked onchange="onIrSourceModeChange()">
-                Paste Pronto codes by hand — for a one-off button, or something you learned yourself
-            </label>
-            <label class="inline-check">
-                <input type="radio" name="irSourceMode" value="reference" onchange="onIrSourceModeChange()">
-                Reference the ir-database — for a device you picked with the ir-database picker and copied onto the remote
-            </label>
-
-            <div id="irInlineForm">
-                <label style="margin-top:10px">Paste a Pronto Hex code</label>
-                <input type="text" id="irManualPronto" placeholder="0000 006D 0022 0000 00AC 00AC 0016 0016 ...">
-                <input type="text" id="irManualLabel" placeholder='Label (optional, e.g. "Power")' style="margin-top:6px">
-
-                <label style="margin-top:10px">Save this command as</label>
-                <input type="text" id="irCommandId" placeholder="e.g., power, hdmi1, volume_up">
-                <div class="btn-row">
-                    <button type="button" class="secondary" onclick="addIrCommand()">+ Add command</button>
-                </div>
-
-                <div id="irCommandsList" style="margin-top:12px"></div>
-            </div>
-
-            <div id="irRefForm" style="display:none">
-                <div class="hint" style="margin-top:10px" id="irRefHint">
-                    Must match exactly what you copied into <code>/sdcard/astrion/ir-database/</code> on the
-                    remote — the app resolves the actual commands from that file at runtime, this builder
-                    never touches ir-database/ itself.
-                </div>
-
-                <div id="irOnDeviceQuickPick" style="display:none">
-                    <label style="margin-top:10px">Already on this remote — pick one</label>
-                    <select id="irOnDeviceCategory" onchange="onIrOnDeviceCategoryChange()"><option value="">— category —</option></select>
-                    <select id="irOnDeviceBrand" onchange="onIrOnDeviceBrandChange()" disabled><option value="">— select a category first —</option></select>
-                    <select id="irOnDeviceModel" onchange="onIrOnDeviceModelChange()" disabled><option value="">— select a brand first —</option></select>
-                </div>
-
-                <label style="margin-top:10px">Category</label>
-                <select id="irRefCategory"></select>
-                <label>Brand</label>
-                <input type="text" id="irRefBrand" placeholder="e.g., LG">
-                <label>Model</label>
-                <input type="text" id="irRefModel" placeholder="e.g., OLED65B8">
-                <label style="margin-top:10px">Known command ids (optional, comma-separated — just for autocomplete below and in scene_grid tiles)</label>
-                <input type="text" id="irRefKnownCommands" placeholder="power, hdmi1, volume_up, mute">
-            </div>
-
-            <div class="btn-row">
-                <button id="saveIrDeviceBtn" onclick="saveIrDevice()">Save device</button>
-                <button id="cancelIrDeviceEditBtn" class="secondary" style="display:none" onclick="cancelIrDeviceEdit()">Cancel edit</button>
-            </div>
-            <div id="irDevicesList" style="margin-top:12px"></div>
-        </div>
-
-        <h2>3. Activities</h2>
+        <h2>2. Activities</h2>
         <div class="section-box">
             <div class="hint">
                 A composed AV Activity ("Watch Apple TV", "Listen to Music"...) that
@@ -161,10 +101,10 @@
             <div id="activitiesList" style="margin-top:12px"></div>
         </div>
 
-        <h2>4. Theme & Colors</h2>
+        <h2>3. Theme &amp; Colors</h2>
         <div class="section-box" id="themeBox"></div>
 
-        <h2>5. Generated JSON</h2>
+        <h2>4. Generated JSON</h2>
         <textarea id="jsonOutput" readonly></textarea>
         <div class="btn-row">
             <button onclick="copyJson()">Copy JSON</button>
@@ -301,14 +241,14 @@
     </div>
 </div>
 
-<div id="previewModal" class="preview-modal" onclick="if (event.target === this) closePreviewModal()">
+<div id="previewModal" class="preview-modal" >
     <div class="preview-modal-inner">
         <button class="preview-modal-close" onclick="closePreviewModal()">✕ Close</button>
         <div id="modalScreenSlot"></div>
     </div>
 </div>
 
-<div id="cardEditorModal" class="preview-modal" onclick="if (event.target === this) cancelCardEdit()">
+<div id="cardEditorModal" class="preview-modal" >
     <div class="preview-modal-inner ha-dialog">
         <button class="preview-modal-close" onclick="cancelCardEdit()">✕ Close</button>
         <h2 style="margin-top:0" id="cardEditorTitle">Add card</h2>
@@ -356,7 +296,7 @@
     </div>
 </div>
 
-<div id="pageDialogModal" class="preview-modal" onclick="if (event.target === this) closePageDialog()">
+<div id="pageDialogModal" class="preview-modal" >
     <div class="preview-modal-inner ha-dialog">
         <button class="preview-modal-close" onclick="closePageDialog()">✕ Close</button>
         <h2 style="margin-top:0" id="pageDialogTitle">Add page</h2>
@@ -389,7 +329,7 @@
     </div>
 </div>
 
-<div id="activityWizardModal" class="preview-modal" onclick="if (event.target === this) closeActivityWizard()">
+<div id="activityWizardModal" class="preview-modal" >
     <div class="preview-modal-inner ha-dialog">
         <button class="preview-modal-close" onclick="closeActivityWizard()">✕ Close</button>
         <h2 style="margin-top:0" id="activityWizardTitle">New Activity</h2>
@@ -405,7 +345,7 @@
     </div>
 </div>
 
-<div id="iconPickerModal" class="preview-modal" onclick="if (event.target === this) closeIconPicker()">
+<div id="iconPickerModal" class="preview-modal" >
     <div class="preview-modal-inner icon-picker-inner">
         <button class="preview-modal-close" onclick="closeIconPicker()">✕ Close</button>
         <h2 style="margin-top:0">Choose an icon</h2>
@@ -421,7 +361,6 @@
 <script src="js/cards.js"></script>
 <script src="js/harmony.js"></script>
 <script src="js/hotkeys.js"></script>
-<script src="js/ir.js"></script>
 <script src="js/activities.js"></script>
 <script src="js/theme.js"></script>
 <script src="js/export.js"></script>

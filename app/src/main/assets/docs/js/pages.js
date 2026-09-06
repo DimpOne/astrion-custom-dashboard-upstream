@@ -1,13 +1,14 @@
-let dashboardData = { startPage: 0, pages: [ { name: "Home", cards: [], hotkeys: [], longHotkeys: [] } ], hotkeys: [], longHotkeys: [], irDevices: [], activities: [], theme: {} };
+let dashboardData = { startPage: 0, pages: [ { name: "Home", cards: [], hotkeys: [], longHotkeys: [] } ], hotkeys: [], longHotkeys: [], irDevices: [], haDevices: [], harmonyAliases: {}, activities: [], theme: {} };
 let currentActivePage = 0;
 let editingCard = null;    // index of the card being edited within the current page, or null
 let editingHotkey = null;  // { scope, listType, i } of the hotkey being edited, or null
 let editingPage = null;    // index of the page being edited in the page dialog, or null (= adding a new one)
 
 /**
- * Turns a display name into a stable, ASCII id — shared by ir.js
- * (irDevices) and activities.js (activities) so both slugify the same way.
- * Diacritics are stripped via Unicode NFD decomposition rather than dropped
+ * Turns a display name into a stable, ASCII id — used by activities.js
+ * (activities) here, and by devices-page.js's own copy for irDevices/
+ * haDevices (a separate page, can't share this one) — kept in sync so both
+ * slugify the same way. Diacritics are stripped via Unicode NFD decomposition rather than dropped
  * outright: "Série" -> "e" would silently swallow the accented letter if we
  * matched straight against [^a-z0-9], producing "s_rie" instead of "serie".
  * `normalize('NFD')` splits "é" into "e" + a separate combining accent
@@ -25,7 +26,7 @@ function slugify(name, fallbackPrefix) {
 }
 
 function resetAll() {
-  dashboardData = { startPage: 0, pages: [ { name: "Home", cards: [], hotkeys: [], longHotkeys: [] } ], hotkeys: [], longHotkeys: [], irDevices: [], activities: [], theme: {} };
+  dashboardData = { startPage: 0, pages: [ { name: "Home", cards: [], hotkeys: [], longHotkeys: [] } ], hotkeys: [], longHotkeys: [], irDevices: [], haDevices: [], harmonyAliases: {}, activities: [], theme: {} };
   currentActivePage = 0;
   document.getElementById('importBox').value = '';
   initEditor();
@@ -68,7 +69,6 @@ function initEditor() {
   renderTabs();
   renderPreview();
   renderHotkeysList();
-  renderIrDevicesList();
   renderActivitiesList();
   if (typeof renderThemeForm === 'function') renderThemeForm();
   if (typeof applyThemeToPreview === 'function') applyThemeToPreview();
@@ -229,3 +229,50 @@ function reorderPage(fromIdx, toIdx) {
   currentActivePage = fixIndex(currentActivePage);
   renderTabs(); renderPreview(); renderHotkeysList(); updateJsonOutput();
 }
+
+// previewModal/modalScreenSlot: scaffolded in index.html (a "✕ Close" button
+// already referenced this) but nothing in this codebase currently opens it —
+// no ReferenceError either way now, and this'll do the right thing the day
+// something does.
+function closePreviewModal() {
+  document.getElementById('previewModal')?.classList.remove('open');
+}
+
+// ---- Modal backdrops: close only on a genuine click on the backdrop itself ---
+//
+// Every modal here is `<div class="preview-modal"><div class="preview-modal-inner">
+// ...content...</div></div>` — clicking the OUTER div (not its content) should
+// close it, same idea as `onclick="if (event.target === this) close()"` which
+// this used to be, directly on each modal's HTML.
+//
+// That inline version had a real bug: picking an option from a native <select>
+// inside the modal (a card type, a domain, a device...) sometimes closed the
+// whole card being edited. Native <select> dropdowns are rendered by the OS/
+// browser outside the normal DOM click flow — dismissing one after picking an
+// option can dispatch a synthetic click that browsers/WebViews report as
+// landing directly on the backdrop, even though the person's finger/mouse
+// never touched it. A plain `click` listener can't tell that apart from a real
+// backdrop tap.
+//
+// Fix: require the *press* (mousedown) to also have started on the backdrop
+// itself, not just the click's target. A real backdrop click always starts
+// and ends there; a synthetic post-select-dismiss click never had a real
+// mousedown on the backdrop to begin with.
+function wireModalBackdropClose(modalId, closeFn) {
+  const el = document.getElementById(modalId);
+  if (!el) return;
+  let downOnBackdrop = false;
+  el.addEventListener('mousedown', e => { downOnBackdrop = (e.target === el); });
+  el.addEventListener('click', e => {
+    if (downOnBackdrop && e.target === el) closeFn();
+    downOnBackdrop = false;
+  });
+}
+
+[
+  ['previewModal', () => closePreviewModal()],
+  ['cardEditorModal', () => cancelCardEdit()],
+  ['pageDialogModal', () => closePageDialog()],
+  ['activityWizardModal', () => closeActivityWizard()],
+  ['iconPickerModal', () => closeIconPicker()],
+].forEach(([id, fn]) => wireModalBackdropClose(id, fn));

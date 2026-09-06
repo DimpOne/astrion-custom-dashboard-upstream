@@ -26,6 +26,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -474,46 +475,65 @@ class MainActivity : ComponentActivity() {
         composeContent()
     }
 
+    /**
+     * Docked or not, [Dashboard] stays composed — earlier versions replaced
+     * it outright with [ChargingScreen] via `return@setContent`, which also
+     * tore down everything that only exists *inside* Dashboard's own
+     * composition: the `LaunchedEffect(navTarget)` that actually acts on
+     * page-navigation requests (from hardware hotkeys as well as
+     * ConfigServer's `/set-page`), and the Activity start/stop callbacks
+     * `onActivityRuntimeReady`/`onStartActivityReady`/`onStopActivityReady`
+     * wire up. So while docked, HA's page `select` and Activity control
+     * would flip back after ~5s: MainActivity updated `navTarget`/called the
+     * runnable, but nothing was composed to consume either one. Overlaying
+     * [ChargingScreen] in a [Box] instead keeps the exact same visual result
+     * (it fills the screen) while leaving page nav, Activities, and webhooks
+     * live in the background. Heavy cards (camera/vacuum/...) still pause
+     * while docked via `screenOn = screenOn && !isDocked` below, same as
+     * they already do whenever the physical screen is off.
+     */
     private fun composeContent() {
         setContent {
-            if (chargeDockMonitor.state.isDocked) {
-                val theme = remember(dashboard.config.theme) { dashboard.config.theme.toColors() }
-                ProvideTheme(theme) { ChargingScreen(dimmed = chargeDockMonitor.dimmed) }
-                return@setContent
-            }
             val entities = client.entities.collectAsState()
             val connection = client.connection.collectAsState()
-            Dashboard(
-                client = client,
-                harmonyRegistry = harmonyRegistry,
-                entitiesState = entities,
-                connectionState = connection,
-                config = dashboard.config,
-                configNotice = dashboard.notice,
-                navTarget = navTarget,
-                onNavHandled = { navTarget = null },
-                overlayTarget = overlayTarget,
-                onOverlayHandled = { overlayTarget = null },
-                onPageChanged = { pageIndex ->
-                    currentPageIndex = pageIndex
-                    rebindHotkeysForCurrentPage()
-                },
-                deviceSettings =
-                DeviceSettingsState(
-                    wakeOnMotionEnabled = wakeOnMotionEnabled,
-                    setWakeOnMotionEnabled = { enabled -> setWakeOnMotion(enabled) },
-                    wifiKeepAwakeEnabled = wifiKeepAwakeEnabled,
-                    setWifiKeepAwakeEnabled = { enabled -> setWifiKeepAwake(enabled) },
-                    configServerEnabled = configServerEnabled,
-                    setConfigServerEnabled = { enabled -> updateConfigServerEnabled(enabled) },
-                    tapFeedbackEnabled = tapFeedbackEnabled,
-                    setTapFeedbackEnabled = { enabled -> setTapFeedback(enabled) }
-                ),
-                screenOn = screenOn,
-                onActivityRuntimeReady = { activityRuntime = it },
-                onStartActivityReady = { fn -> startActivityFn = fn },
-                onStopActivityReady = { fn -> stopActivityFn = fn }
-            )
+            val isDocked = chargeDockMonitor.state.isDocked
+            Box {
+                Dashboard(
+                    client = client,
+                    harmonyRegistry = harmonyRegistry,
+                    entitiesState = entities,
+                    connectionState = connection,
+                    config = dashboard.config,
+                    configNotice = dashboard.notice,
+                    navTarget = navTarget,
+                    onNavHandled = { navTarget = null },
+                    overlayTarget = overlayTarget,
+                    onOverlayHandled = { overlayTarget = null },
+                    onPageChanged = { pageIndex ->
+                        currentPageIndex = pageIndex
+                        rebindHotkeysForCurrentPage()
+                    },
+                    deviceSettings =
+                    DeviceSettingsState(
+                        wakeOnMotionEnabled = wakeOnMotionEnabled,
+                        setWakeOnMotionEnabled = { enabled -> setWakeOnMotion(enabled) },
+                        wifiKeepAwakeEnabled = wifiKeepAwakeEnabled,
+                        setWifiKeepAwakeEnabled = { enabled -> setWifiKeepAwake(enabled) },
+                        configServerEnabled = configServerEnabled,
+                        setConfigServerEnabled = { enabled -> updateConfigServerEnabled(enabled) },
+                        tapFeedbackEnabled = tapFeedbackEnabled,
+                        setTapFeedbackEnabled = { enabled -> setTapFeedback(enabled) }
+                    ),
+                    screenOn = screenOn && !isDocked,
+                    onActivityRuntimeReady = { activityRuntime = it },
+                    onStartActivityReady = { fn -> startActivityFn = fn },
+                    onStopActivityReady = { fn -> stopActivityFn = fn }
+                )
+                if (isDocked) {
+                    val theme = remember(dashboard.config.theme) { dashboard.config.theme.toColors() }
+                    ProvideTheme(theme) { ChargingScreen(dimmed = chargeDockMonitor.dimmed) }
+                }
+            }
         }
     }
 

@@ -7,10 +7,10 @@
 // idPrefix "gi") — pass a distinct idPrefix per form so their generated
 // element ids never collide when both are in the DOM at once.
 //
-// Only available when this builder is served *from the app itself*
-// (http://<device-ip>:8080/builder/) — when opened standalone (GitHub Pages,
-// `npx http-server`), these fetches fail and forms fall back to the original
-// plain text inputs, same as before.
+// The builder only ever runs served *from the app itself*
+// (http://<device-ip>:8080/builder/), so these fetches normally succeed;
+// if a hub can't be reached this still degrades to a plain text input
+// rather than blocking the form.
 
 let harmonyHubsList = [];        // [{localId, name}], loaded once
 const harmonyConfigCache = {};   // hubLocalId -> {devices, activities}
@@ -115,7 +115,10 @@ function onHarmonyDeviceChange(idPrefix) {
   const device = (data && data.devices || []).find(d => d.id === deviceId);
   const commands = (device && device.commands) || [];
   cmdSel.innerHTML = '<option value="">— select a command —</option>' +
-    commands.map(c => `<option value="${c.name}">${c.label}</option>`).join('');
+    commands.map(c => {
+      const alias = dashboardData.harmonyAliases?.[hubId]?.[deviceId]?.[c.name];
+      return `<option value="${c.name}">${alias || c.label}</option>`;
+    }).join('');
   cmdSel.disabled = false;
 }
 
