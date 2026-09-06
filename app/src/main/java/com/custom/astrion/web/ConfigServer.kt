@@ -46,19 +46,37 @@ import org.json.JSONObject
  * same network configure this device without adb — the same pattern the
  * official panel firmware uses for its own local config page. Serves:
  *
- *  GET  /                connection form, dashboard.json / icon upload, updates
- *  GET  /builder          redirects to /builder/
- *  GET  /builder/          the dashboard editor UI (bundled from assets/docs/),
- *                        same tool as the GitHub Pages one, served locally
- *  POST /save-connection save HA_URL / HA_TOKEN / Harmony hub list,
- *                        then restarts the activity to reconnect with them
+ *  GET  /                the Devices page (bundled from assets/docs/devices.html):
+ *                        Home Assistant, Harmony Hub(s), IR Devices — "+ Add
+ *                        device", Home-Assistant-integrations style. Every
+ *                        device is configured exactly once here; the dashboard
+ *                        builder below only references them by name.
+ *  GET  /builder         redirects to /builder/
+ *  GET  /builder/        the dashboard/card editor UI (bundled from
+ *                        assets/docs/index.html) — layout, cards, hotkeys,
+ *                        Activities, theme. Has no device-editing UI of its
+ *                        own; only exists served from this device, no
+ *                        offline/standalone mode.
+ *  GET  /<file>          any other file under assets/docs/ (styles.css,
+ *                        every file under js/, images) served straight from
+ *                        the root — shared by both / (devices.html) and
+ *                        /builder/ (index.html, via /builder/<file>)
+ *  POST /save-connection save HA_URL / HA_TOKEN / Harmony hub list — always
+ *                        posted as a whole (see parseHubRows), so any single
+ *                        device's form on / must resend every hub, not just
+ *                        the one it's editing — then restarts the activity to
+ *                        reconnect with them
  *  GET  /harmony-config  fetch a paired hub's devices/commands/activities as JSON
  *                        (?hub=<localId>, defaults to the first configured hub).
  *                        Cached to astrion/harmony_<hubId>.json next to
  *                        dashboard.json on every successful fetch, and served
  *                        from that cache if the hub is temporarily unreachable.
- *  GET  /harmony-hubs    list configured hubs (id + name), for the "Hub" dropdown
- *                        in the dashboard editor's hotkey form
+ *  GET  /harmony-hubs    list configured hubs (id + name only) — feeds the
+ *                        read-only "Hub" dropdown inside the dashboard
+ *                        builder's card/hotkey forms
+ *  GET  /devices-config  full read-back of everything /save-connection accepts
+ *                        (HA url/token/webhook + Harmony hubs incl. ip/hubId) —
+ *                        lets the Devices page (/) pre-fill a device's edit form
  *  GET  /harmony-discover resolve a hub's numeric hubId from its IP alone
  *                        (?ip=<address>) — used by the "Auto-detect ID" button
  *  GET  /camera-snapshot proxy a single still frame for a camera.* entity
@@ -69,8 +87,13 @@ import org.json.JSONObject
  *                        ({entity_id: {state, friendly_name, attributes}}) plus
  *                        a `connected` flag — lets the dashboard editor preview
  *                        render with live HA data instead of the static mocks
- *  GET  /dashboard.json  download the current dashboard.json (backup)
+ *  GET  /dashboard.json  download the current dashboard.json (backup) — also
+ *                        how the Devices page (/) reads the "irDevices" array,
+ *                        since IR devices are stored inside dashboard.json
  *  POST /dashboard.json  replace dashboard.json, then live-reload the dashboard
+ *                        — also how the Devices page (/) saves IR device
+ *                        add/edit/remove, re-posting the whole file with only
+ *                        "irDevices" changed
  *  POST /icons           upload a PNG into /sdcard/astrion/icons/
  *  GET  /icons-list       list every uploaded icon's filename, as JSON — feeds
  *                        the dashboard editor's icon picker
@@ -196,7 +219,7 @@ class ConfigServer(
     override fun serve(session: IHTTPSession): Response = try {
         val method = session.method
         when (val uri = session.uri) {
-            "/" -> if (method == Method.GET) serveForm() else methodNotAllowed()
+            "/" -> if (method == Method.GET) serveRootDocsAsset("/") else methodNotAllowed()
             "/dashboard.json" ->
                 when (method) {
                     Method.GET -> serveDashboardJson()
@@ -207,6 +230,7 @@ class ConfigServer(
             "/builder" -> if (method == Method.GET) redirectBuilder() else methodNotAllowed()
             "/harmony-config" -> if (method == Method.GET) serveHarmonyConfig(session) else methodNotAllowed()
             "/harmony-hubs" -> if (method == Method.GET) serveHarmonyHubs() else methodNotAllowed()
+            "/devices-config" -> if (method == Method.GET) serveDevicesConfig() else methodNotAllowed()
             "/harmony-discover" -> if (method == Method.GET) serveHarmonyDiscover(session) else methodNotAllowed()
             "/camera-snapshot" -> if (method == Method.GET) serveCameraSnapshot(session) else methodNotAllowed()
             "/ha-states" -> if (method == Method.GET) serveHaStates() else methodNotAllowed()
@@ -236,17 +260,18 @@ class ConfigServer(
             else ->
                 when {
                     uri.startsWith("/builder/") ->
-                        if (method == Method.GET) {
-                            serveBuilderAsset(
-                                uri
-                            )
-                        } else {
-                            methodNotAllowed()
-                        }
-
+                        if (method == Method.GET) serveBuilderAsset(uri) else methodNotAllowed()
                     uri.startsWith("/icons/") -> if (method == Method.GET) serveIcon(uri) else methodNotAllowed()
                     uri.startsWith("/ir-database/") ->
                         if (method == Method.GET) serveIrDatabaseFile(uri) else methodNotAllowed()
+                    // Any other GET falls through to a plain docs/ asset lookup —
+                    // styles.css, every file under js/, images (the hero logo,
+                    // favicons, future additions to assets/docs/...) all "just
+                    // work" from the root without needing a route added per
+                    // file, same as /builder/ already does for the dashboard
+                    // editor's own assets. serveDocsAsset 404s cleanly if the
+                    // file really doesn't exist.
+                    method == Method.GET -> serveRootDocsAsset(uri)
                     else ->
                         newFixedLengthResponse(
                             Response.Status.NOT_FOUND,
@@ -281,489 +306,6 @@ class ConfigServer(
 
     // ---- pages --------------------------------------------------------------
 
-    private fun serveForm(): Response {
-        val haUrl = RemoteSettings.haUrl(context)
-        val haToken = RemoteSettings.haToken(context)
-        val haWebhookId = RemoteSettings.haWebhookId(context)
-        val hubs = RemoteSettings.harmonyHubs(context)
-        val haConfigured = haUrl.isNotBlank() && haToken.isNotBlank()
-        val update = (lastResult as? UpdateChecker.CheckResult.Available)?.info
-
-        val updateBadgeHtml =
-            if (update != null) {
-                """
-                <form method="post" action="/install-update" class="status-right">
-                  <button type="submit" class="badge badge-warn" title="${
-                    escape(
-                        context.getString(R.string.web_config_install_update_button)
-                    )
-                }">
-                    <span class="dot dot-warn"></span>${
-                    context.getString(
-                        R.string.web_config_update_found,
-                        update.version
-                    )
-                }
-                  </button>
-                </form>
-                """.trimIndent()
-            } else {
-                """
-                <a class="badge status-right" href="/check-update" title="${
-                    escape(
-                        context.getString(R.string.web_config_check_update_link)
-                    )
-                }">
-                  <span class="dot dot-off"></span>v${BuildConfig.VERSION_NAME}
-                </a>
-                """.trimIndent()
-            }
-
-        val html =
-            """
-            <!doctype html><html><head><meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>${context.getString(R.string.web_config_title)}</title>
-            <link rel="preconnect" href="https://fonts.googleapis.com">
-            <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-            <style>
-              :root{
-                --bg:#0A1517; --surface:#101F24; --raised:#16282E; --line:#1F2E33;
-                --text:#E7EEEF; --muted:#7E97A0;
-                --cyan:#4FD1E0; --cyan-dim:#1B3438;
-                --amber:#F0A959; --amber-dim:#3A2A18;
-                --danger:#E5837E; --ok:#6EE7B7; --off:#445056;
-              }
-              *{box-sizing:border-box}
-              body{
-                font-family:'IBM Plex Mono',ui-monospace,monospace;
-                background:var(--bg); color:var(--text);
-                max-width:900px; margin:0 auto; padding:28px 18px 56px;
-                -webkit-font-smoothing:antialiased;
-              }
-              .eyebrow{
-                font-size:11px; letter-spacing:.14em; text-transform:uppercase;
-                color:var(--cyan); font-weight:500;
-              }
-              h1{
-                font-family:'Space Grotesk',sans-serif; font-size:26px; font-weight:700;
-                margin:4px 0 18px; letter-spacing:-.01em;
-              }
-              h2{
-                font-family:'Space Grotesk',sans-serif; font-size:15px; font-weight:700;
-                margin:0; display:flex; align-items:center; gap:8px;
-              }
-              .icon{width:18px;height:18px;flex:none}
-              label{display:block;margin-top:14px;font-size:12px;color:var(--muted);letter-spacing:.02em}
-              input[type=text],input[type=password]{
-                width:100%; box-sizing:border-box; padding:9px 10px; margin-top:5px;
-                background:var(--bg); border:1px solid var(--line); color:var(--text);
-                border-radius:7px; font-family:inherit; font-size:13px;
-              }
-              input:focus{outline:2px solid var(--cyan); outline-offset:1px; border-color:transparent}
-              .btn{
-                margin-top:16px; padding:10px 16px; border:none; border-radius:7px;
-                font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:13px;
-                cursor:pointer;
-              }
-              .btn-cyan{background:var(--cyan); color:#04191c}
-              .btn-amber{background:var(--amber); color:#241505}
-              .btn-ghost{background:var(--raised); color:var(--text); border:1px solid var(--line)}
-              .btn-block{width:100%; text-align:center; display:block; text-decoration:none}
-              .note{font-size:11.5px; color:var(--muted); margin-top:6px; line-height:1.5}
-              a{color:var(--cyan)}
-              .panel{
-                background:var(--surface); border:1px solid var(--line); border-radius:12px;
-                padding:18px 18px 20px; margin-top:22px; border-left:3px solid var(--accent,var(--line));
-              }
-              .panel-connection{--accent:var(--cyan)}
-              .panel-editor{--accent:var(--amber)}
-              .panel-ring{--accent:var(--ok)}
-              .panel h2{color:var(--accent,var(--text))}
-              .panel-sub{font-size:12px;color:var(--muted);margin:4px 0 0}
-              .status-strip{display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin:14px 0 4px}
-              .status-left{display:flex; gap:8px; flex-wrap:wrap}
-              .status-right{margin:0}
-              .badge{
-                display:inline-flex; align-items:center; gap:6px; font-size:11px;
-                padding:6px 10px; border-radius:999px; background:var(--raised); border:1px solid var(--line);
-                font-family:inherit; text-decoration:none; color:var(--text); cursor:default;
-              }
-              a.badge,button.badge{cursor:pointer}
-              .badge-warn{background:var(--amber-dim); border-color:var(--amber); color:var(--amber)}
-              .dot{width:7px;height:7px;border-radius:50%;flex:none}
-              .dot-ok{background:var(--ok)} .dot-off{background:var(--off)} .dot-warn{background:var(--amber)}
-              .panels-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start}
-              @media (max-width:700px){ .panels-grid{grid-template-columns:1fr} }
-              .panels-grid .panel{margin-top:0}
-              .divider{height:1px; background:var(--line); margin:20px 0}
-              .hub-row{border:1px solid var(--line);border-radius:9px;padding:12px;margin-top:12px;background:var(--raised)}
-              .hub-row .hub-actions{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
-              .hub-row .hub-actions a{font-size:11.5px}
-              .hub-remove{background:none;border:none;color:var(--danger);font-size:11.5px;margin:0;padding:0;cursor:pointer;font-family:inherit}
-              .hub-add{background:transparent;color:var(--cyan);border:1px dashed var(--cyan);width:100%}
-              .hub-discover-btn{background:var(--surface);color:var(--cyan);border:1px solid var(--line)}
-              .hub-config-result{white-space:pre-wrap;font-size:10.5px;background:var(--bg);border:1px solid var(--line);
-                border-radius:6px;padding:8px;margin-top:6px;max-height:200px;overflow:auto;display:none}
-              select{
-                width:100%; box-sizing:border-box; padding:9px 10px; margin-top:5px;
-                background:var(--bg); border:1px solid var(--line); color:var(--text);
-                border-radius:7px; font-family:inherit; font-size:13px;
-              }
-              input[type=range]{width:100%; margin-top:8px; accent-color:var(--ok)}
-              input[type=number]{
-                width:100%; box-sizing:border-box; padding:9px 10px; margin-top:5px;
-                background:var(--bg); border:1px solid var(--line); color:var(--text);
-                border-radius:7px; font-family:inherit; font-size:13px;
-              }
-              .ring-actions{display:flex; gap:10px; margin-top:16px}
-              .ring-actions .btn{margin-top:0; flex:1}
-            </style></head><body>
-
-            <div class="eyebrow">ASTRION · LOCAL CONFIG</div>
-            <h1>${context.getString(R.string.web_config_title)}</h1>
-            <div class="status-strip">
-              <div class="status-left">
-                <span class="badge"><span class="dot ${if (haConfigured) "dot-ok" else "dot-off"}"></span>${
-                context.getString(
-                    R.string.web_config_ha_heading
-                )
-            }${if (haConfigured) "" else " — " + context.getString(R.string.web_config_status_not_set)}</span>
-                <span class="badge"><span class="dot ${if (hubs.isNotEmpty()) "dot-ok" else "dot-off"}"></span>${hubs.size} ${
-                context.getString(
-                    if (hubs.size == 1) R.string.web_config_status_hub_singular else R.string.web_config_status_hub_plural
-                )
-            }</span>
-              </div>
-              $updateBadgeHtml
-            </div>
-
-            <div class="panels-grid">
-            <div class="panel panel-connection">
-              <h2>${svgWifi()}${context.getString(R.string.web_config_ha_heading)}</h2>
-              <form method="post" action="/save-connection" id="connection-form">
-                <label>${context.getString(R.string.web_config_ha_url_label)}</label>
-                <input type="text" name="ha_url" value="${escape(haUrl)}" placeholder="http://192.168.1.50:8123">
-                <label>${context.getString(R.string.web_config_ha_token_label)}</label>
-                <input type="password" name="ha_token" value="${escape(haToken)}">
-                <label>${context.getString(R.string.web_config_ha_webhook_label)}</label>
-                <input type="text" name="ha_webhook_id" value="${escape(haWebhookId)}" placeholder="astrion_push">
-                <div class="hint">${context.getString(R.string.web_config_ha_webhook_hint)}</div>
-
-                <div class="divider"></div>
-
-                <h2>${svgRemote()}${context.getString(R.string.web_config_harmony_heading)}</h2>
-                <div id="harmony-hubs">
-                  ${hubs.joinToString("") { hubRowHtml(it) }}
-                </div>
-                <button type="button" class="btn hub-add" onclick="addHubRow()">${
-                context.getString(
-                    R.string.web_config_harmony_add_button
-                )
-            }</button>
-
-                <button type="submit" class="btn btn-cyan">${context.getString(R.string.web_config_save_button)}</button>
-                <div class="note">${context.getString(R.string.web_config_save_note)}</div>
-              </form>
-            </div>
-
-            <div class="panel panel-editor">
-              <h2>${svgWand()}${context.getString(R.string.web_config_dashboard_heading)}</h2>
-              <p class="panel-sub">${context.getString(R.string.web_config_dashboard_sub)}</p>
-              <a class="btn btn-amber btn-block" href="/builder/">${context.getString(R.string.web_config_dashboard_builder_link)}</a>
-
-              <div class="divider"></div>
-
-              <a class="btn btn-ghost" href="/dashboard.json">${svgDownload()} ${
-                context.getString(
-                    R.string.web_config_dashboard_download
-                )
-            }</a>
-
-              <label>${svgUpload()} ${context.getString(R.string.web_config_dashboard_upload_button)}</label>
-              <form method="post" action="/dashboard.json" enctype="multipart/form-data">
-                <input type="file" name="file" accept=".json">
-                <button type="submit" class="btn btn-ghost">${context.getString(R.string.web_config_dashboard_upload_button)}</button>
-              </form>
-
-              <div class="divider"></div>
-
-              <label>${svgImage()} ${context.getString(R.string.web_config_icons_heading)}</label>
-              <form method="post" action="/icons" enctype="multipart/form-data">
-                <input type="file" name="file" accept="image/png">
-                <button type="submit" class="btn btn-ghost">${context.getString(R.string.web_config_icons_upload_button)}</button>
-              </form>
-              <p class="note">${context.getString(R.string.web_config_icons_note)}</p>
-
-              <div class="divider"></div>
-
-              <label>${svgRemote()} ${context.getString(R.string.web_config_ir_database_heading)}</label>
-              <p class="panel-sub">${context.getString(R.string.web_config_ir_database_sub)}</p>
-              <a class="btn btn-ghost btn-block" href="https://dckiller51.github.io/astrion-ir-sniffer/" target="_blank" rel="noopener">${context.getString(
-                R.string.web_config_ir_database_picker_link
-            )}</a>
-              <form method="post" action="/ir-database" enctype="multipart/form-data">
-                <input type="file" name="file" accept="application/json,.json">
-                <button type="submit" class="btn btn-ghost">${context.getString(R.string.web_config_ir_database_upload_button)}</button>
-              </form>
-              <p class="note">${context.getString(R.string.web_config_ir_database_note)}</p>
-            </div>
-            </div>
-
-            <div class="panel panel-ring">
-              <h2>${svgBell()}${context.getString(R.string.web_config_ring_heading)}</h2>
-              <p class="panel-sub">${context.getString(R.string.web_config_ring_sub)}</p>
-
-              <label>${context.getString(R.string.web_config_ring_volume_label)} (<output id="ring-volume-out">80</output>%)</label>
-              <input type="range" id="ring-volume" min="1" max="100" value="80"
-                     oninput="document.getElementById('ring-volume-out').textContent=this.value">
-
-              <label>${context.getString(R.string.web_config_ring_sound_label)}</label>
-              <select id="ring-sound">
-                <option value="ringtone">${context.getString(R.string.web_config_ring_sound_ringtone)}</option>
-                <option value="alarm">${context.getString(R.string.web_config_ring_sound_alarm)}</option>
-                <option value="notification">${context.getString(R.string.web_config_ring_sound_notification)}</option>
-              </select>
-
-              <label>${context.getString(R.string.web_config_ring_duration_label)}</label>
-              <input type="number" id="ring-duration" min="1" max="60" value="15">
-
-              <div class="ring-actions">
-                <button type="button" class="btn btn-cyan" onclick="startRing()">${context.getString(
-                R.string.web_config_ring_button
-            )}</button>
-                <button type="button" class="btn btn-ghost" onclick="stopRing()">${context.getString(
-                R.string.web_config_ring_stop_button
-            )}</button>
-              </div>
-              <p class="note" id="ring-status"></p>
-            </div>
-
-            <template id="hub-row-template">${
-                hubRowHtml(
-                    HarmonyHubConfig(
-                        "",
-                        "",
-                        "",
-                        ""
-                    )
-                )
-            }</template>
-            <script>
-              function addHubRow() {
-                const tpl = document.getElementById('hub-row-template').innerHTML;
-                const div = document.createElement('div');
-                div.innerHTML = tpl;
-                document.getElementById('harmony-hubs').appendChild(div.firstElementChild);
-              }
-              function removeHubRow(btn) {
-                btn.closest('.hub-row').remove();
-              }
-              function fetchHubConfig(btn, localId) {
-                const out = btn.closest('.hub-row').querySelector('.hub-config-result');
-                out.style.display = 'block';
-                out.textContent = '${jsEscape(context.getString(R.string.web_config_harmony_fetching))}';
-                fetch('/harmony-config?hub=' + encodeURIComponent(localId))
-                  .then(r => r.json())
-                  .then(data => { out.textContent = JSON.stringify(data, null, 2); })
-                  .catch(e => { out.textContent = 'Error: ' + e; });
-              }
-              /** Shared discovery logic. `silent` suppresses the alert on failure —
-                  used for the automatic on-blur trigger, which shouldn't nag the
-                  user before they've even finished typing the IP. */
-              function runDiscoverHubId(row, silent) {
-                const ipInput = row.querySelector('input[name="hub_ip[]"]');
-                const idInput = row.querySelector('input[name="hub_hubid[]"]');
-                const btn = row.querySelector('.hub-discover-btn');
-                const ip = ipInput.value.trim();
-                if (!ip) {
-                  if (!silent) alert('${jsEscape(context.getString(R.string.web_config_harmony_discover_need_ip))}');
-                  return;
-                }
-                const originalText = btn.textContent;
-                btn.textContent = '${jsEscape(context.getString(R.string.web_config_harmony_fetching))}';
-                btn.disabled = true;
-                fetch('/harmony-discover?ip=' + encodeURIComponent(ip))
-                  .then(r => r.json())
-                  .then(data => {
-                    if (data.hubId) { idInput.value = data.hubId; }
-                    else if (!silent) { alert(data.error || '${
-                jsEscape(
-                    context.getString(R.string.web_config_harmony_discover_failed)
-                )
-            }'); }
-                  })
-                  .catch(e => { if (!silent) alert('${jsEscape(context.getString(R.string.web_config_harmony_discover_failed))}: ' + e); })
-                  .finally(() => { btn.textContent = originalText; btn.disabled = false; });
-              }
-              function discoverHubId(btn) {
-                runDiscoverHubId(btn.closest('.hub-row'), false);
-              }
-              /** Auto-triggered when the IP field loses focus — only if the ID
-                  field is still empty, so it never overwrites a value someone
-                  entered or fetched manually. Silent: a failed guess here (e.g.
-                  because the IP isn't reachable yet) shouldn't pop an alert while
-                  the form is still being filled in — the "Auto-detect ID" button
-                  stays available for a manual retry with a visible error. */
-              function onHubIpBlur(ipInput) {
-                const row = ipInput.closest('.hub-row');
-                const idInput = row.querySelector('input[name="hub_hubid[]"]');
-                if (idInput.value.trim()) return;
-                runDiscoverHubId(row, true);
-              }
-
-              function startRing() {
-                const volume = document.getElementById('ring-volume').value;
-                const sound = document.getElementById('ring-sound').value;
-                const duration = document.getElementById('ring-duration').value;
-                const status = document.getElementById('ring-status');
-                status.textContent = '${jsEscape(context.getString(R.string.web_config_ring_status_ringing))}';
-                fetch('/ring', {
-                  method: 'POST',
-                  headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                  body: 'volume=' + encodeURIComponent(volume) +
-                        '&sound=' + encodeURIComponent(sound) +
-                        '&duration=' + encodeURIComponent(duration)
-                })
-                  .then(r => r.json().then(data => ({ok: r.ok, data})))
-                  .then(({ok, data}) => {
-                    if (!ok) {
-                      status.textContent = '${jsEscape(context.getString(R.string.web_config_ring_status_error))} ' + (data.error || '');
-                    }
-                  })
-                  .catch(e => { status.textContent = '' + e; });
-              }
-              function stopRing() {
-                const status = document.getElementById('ring-status');
-                fetch('/ring/stop', {method: 'POST'})
-                  .then(() => { status.textContent = '${jsEscape(context.getString(R.string.web_config_ring_status_stopped))}'; })
-                  .catch(e => { status.textContent = '' + e; });
-              }
-            </script>
-
-            </body></html>
-            """.trimIndent()
-        return newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", html)
-    }
-
-    // ---- inline icons (no external requests — this page must work with zero
-    // internet access beyond the optional Google Fonts, which degrade gracefully) --
-
-    private fun svgWifi() = """
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-      <path d="M2 8.5a17 17 0 0 1 20 0"/>
-      <path d="M5.5 12.5a12 12 0 0 1 13 0"/>
-      <path d="M9 16.5a7 7 0 0 1 6 0"/>
-      <circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/>
-    </svg>
-    """.trimIndent()
-
-    private fun svgRemote() = """
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="7" y="2" width="10" height="20" rx="3"/>
-      <circle cx="12" cy="7" r="1.4" fill="currentColor" stroke="none"/>
-      <path d="M9.5 12h5M9.5 15.5h5M9.5 19h2"/>
-    </svg>
-    """.trimIndent()
-
-    private fun svgWand() = """
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M4 20 16 8"/>
-      <path d="M14.5 9.5 18 6"/>
-      <path d="M19 4v2M22 5h-2M4 3v2M3 4h2M19.5 15v2M20.5 16h-2"/>
-    </svg>
-    """.trimIndent()
-
-    private fun svgBell() = """
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M6 8a6 6 0 0 1 12 0c0 3.5 1 5 2 6H4c1-1 2-2.5 2-6Z"/>
-      <path d="M10 20a2 2 0 0 0 4 0"/>
-    </svg>
-    """.trimIndent()
-
-    private fun svgDownload() = """
-    <svg class="icon" style="width:13px;height:13px;vertical-align:-2px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12 3v12M7 10l5 5 5-5M4 20h16"/>
-    </svg>
-    """.trimIndent()
-
-    private fun svgUpload() = """
-    <svg class="icon" style="width:13px;height:13px;vertical-align:-2px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12 20V8M7 13l5-5 5 5M4 4h16"/>
-    </svg>
-    """.trimIndent()
-
-    private fun svgImage() = """
-    <svg class="icon" style="width:13px;height:13px;vertical-align:-2px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="3" y="4" width="18" height="16" rx="2"/>
-      <circle cx="8.5" cy="9.5" r="1.4" fill="currentColor" stroke="none"/>
-      <path d="m4 17 5-5 4 4 3-3 4 4"/>
-    </svg>
-    """.trimIndent()
-
-    /** One repeatable hub row — also used (with blank values) as the JS `+` template. */
-    private fun hubRowHtml(hub: HarmonyHubConfig): String {
-        val fetchLink =
-            if (hub.localId.isNotBlank()) {
-                """<a href="#" onclick="fetchHubConfig(this, '${
-                    escape(
-                        hub.localId
-                    )
-                }'); return false;">${context.getString(R.string.web_config_harmony_fetch_link)}</a>"""
-            } else {
-                "" // unsaved row — nothing to fetch yet, hub doesn't exist on the backend until Save is pressed
-            }
-        return """
-                                                                                                                                                <div class="hub-row">
-                                                                                                                                                  <input type="hidden" name="hub_localid[]" value="${
-            escape(
-                hub.localId
-            )
-        }">
-                                                                                                                                                  <label>${context.getString(
-            R.string.web_config_harmony_name_label
-        )}</label>
-                                                                                                                                                  <input type="text" name="hub_name[]" value="${
-            escape(
-                hub.name
-            )
-        }" placeholder="Salon">
-                                                                                                                                                  <label>${context.getString(
-            R.string.web_config_harmony_ip_label
-        )}</label>
-                                                                                                                                                  <input type="text" name="hub_ip[]" value="${
-            escape(
-                hub.ip
-            )
-        }" placeholder="192.168.1.50" onblur="onHubIpBlur(this)">
-                                                                                                                                                  <label>${context.getString(
-            R.string.web_config_harmony_id_label
-        )}</label>
-                                                                                                                                                  <div style="display:flex;gap:6px;align-items:center">
-                                                                                                                                                    <input type="text" name="hub_hubid[]" value="${
-            escape(
-                hub.hubId
-            )
-        }" style="flex:1">
-                                                                                                                                                    <button type="button" class="hub-discover-btn" style="margin-top:0;padding:8px 10px;white-space:nowrap;border-radius:7px;font-family:inherit;font-size:12px;cursor:pointer" onclick="discoverHubId(this)">${
-            context.getString(
-                R.string.web_config_harmony_discover_button
-            )
-        }</button>
-                                                                                                                                                  </div>
-                                                                                                                                                  <div class="hub-actions">
-                                                                                                                                                    $fetchLink
-                                                                                                                                                    <button type="button" class="hub-remove" onclick="removeHubRow(this)">${
-            context.getString(
-                R.string.web_config_harmony_remove_button
-            )
-        }</button>
-                                                                                                                                                  </div>
-                                                                                                                                                  <div class="hub-config-result"></div>
-                                                                                                                                                </div>
-        """.trimIndent()
-    }
-
     private fun serveDashboardJson(): Response {
         val file = DashboardLoader.configFile
         if (!file.exists()) {
@@ -777,14 +319,31 @@ class ConfigServer(
     }
 
     /**
-     * Serves the dashboard builder (the same tool published on GitHub Pages
-     * as docs/index.html) straight from this device's own local web server,
-     * bundled as assets/docs/ — so building a dashboard.json doesn't require
-     * a separate computer or internet access, just this device's own IP.
-     * `/builder` -> assets/docs/index.html, `/builder/js/x.js` -> assets/docs/js/x.js, etc.
+     * Serves the dashboard/card builder straight from this device's own local
+     * web server, bundled as assets/docs/ — so building a dashboard.json
+     * doesn't require a separate computer or internet access, just this
+     * device's own IP. No standalone/offline mode: this only ever runs
+     * served from here. `/builder` -> assets/docs/index.html,
+     * `/builder/js/x.js` -> assets/docs/js/x.js, etc.
      */
     private fun serveBuilderAsset(uri: String): Response {
         val relativePath = uri.removePrefix("/builder/").ifBlank { "index.html" }
+        return serveDocsAsset(relativePath)
+    }
+
+    /** Root-level counterpart to [serveBuilderAsset]: serves the *devices*
+     * page (assets/docs/devices.html, plus every file under its js/ folder,
+     * and styles.css) at
+     * the server root, so opening the device's own IP lands on "add a
+     * device" first — /builder/ stays the dashboard/card editor, one level
+     * down, exactly like clicking into a device from Home Assistant's
+     * Settings screen doesn't also hand you the dashboard editor. */
+    private fun serveRootDocsAsset(uri: String): Response {
+        val relativePath = uri.removePrefix("/").ifBlank { "devices.html" }
+        return serveDocsAsset(relativePath)
+    }
+
+    private fun serveDocsAsset(relativePath: String): Response {
         if (relativePath.contains("..")) {
             return newFixedLengthResponse(Response.Status.FORBIDDEN, "text/plain", "Forbidden")
         }
@@ -811,12 +370,17 @@ class ConfigServer(
                 "ico" -> "image/x-icon"
                 else -> "application/octet-stream"
             }
-        return newFixedLengthResponse(
-            Response.Status.OK,
-            mime,
-            bytes.inputStream(),
-            bytes.size.toLong()
-        )
+        val response =
+            newFixedLengthResponse(
+                Response.Status.OK,
+                mime,
+                bytes.inputStream(),
+                bytes.size.toLong()
+            )
+        response.addHeader("Cache-Control", "no-cache, no-store, must-revalidate")
+        response.addHeader("Pragma", "no-cache")
+        response.addHeader("Expires", "0")
+        return response
     }
 
     /** 302 redirect — used to send /builder to /builder/ so index.html's
@@ -845,6 +409,44 @@ class ConfigServer(
                         }
                     )
                 }
+            }
+        return newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
+    }
+
+    /**
+     * Everything the Devices page (/, docs/js/devices-page.js) needs to
+     * pre-fill its Home Assistant + Harmony Hub forms for *editing* — unlike
+     * [serveHarmonyHubs] above (deliberately id+name only, for pickers), this
+     * includes the HA token and each hub's ip/hubId. Same trust level as
+     * /save-connection, which already accepts these back: local-only server,
+     * same device, same secret either way.
+     */
+    private fun serveDevicesConfig(): Response {
+        val json =
+            JSONObject().apply {
+                put(
+                    "ha",
+                    JSONObject().apply {
+                        put("url", RemoteSettings.haUrl(context))
+                        put("token", RemoteSettings.haToken(context))
+                        put("webhookId", RemoteSettings.haWebhookId(context))
+                    }
+                )
+                put(
+                    "harmonyHubs",
+                    JSONArray().apply {
+                        RemoteSettings.harmonyHubs(context).forEach { hub ->
+                            put(
+                                JSONObject().apply {
+                                    put("localId", hub.localId)
+                                    put("name", hub.name)
+                                    put("ip", hub.ip)
+                                    put("hubId", hub.hubId)
+                                }
+                            )
+                        }
+                    }
+                )
             }
         return newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
     }
@@ -1318,8 +920,8 @@ class ConfigServer(
      *       "friendly_name": "X", "attributes": { ... } }, ... } }
      *
      * `connected` reflects the WebSocket state at call time; the editor falls
-     * back to the mocks when it's false (or when this endpoint isn't reachable,
-     * e.g. the GitHub Pages copy of the editor). Attributes are passed through
+     * back to the mocks when it's false (or before this endpoint has answered
+     * yet on first load). Attributes are passed through
      * verbatim (the same kotlinx JsonObject the cards read), so each card's
      * preview can pull whatever domain-specific fields it needs.
      */
@@ -1538,9 +1140,7 @@ class ConfigServer(
      * Lists every icon previously uploaded to [iconsDir], as a JSON array of
      * bare filenames — feeds the dashboard builder's icon picker (`docs/js/
      * cards.js`'s `openIconPicker()`), which shows them as clickable
-     * thumbnails instead of making the person type a path by hand. Only
-     * meaningful when the builder is opened from this device (`/builder/`);
-     * the picker button hides itself if this call fails (e.g. GitHub Pages).
+     * thumbnails instead of making the person type a path by hand.
      */
     private fun serveIconsList(): Response {
         val names =
@@ -1849,15 +1449,4 @@ class ConfigServer(
     }
 
     private fun sanitize(name: String) = name.substringAfterLast('/').replace(Regex("[^A-Za-z0-9._-]"), "_")
-
-    private fun escape(s: String) = s.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;")
-
-    /** Escapes a string for safe embedding inside a single-quoted JS string literal
-     * in the generated <script> block — needed for any translated string (which may
-     * contain apostrophes, e.g. French "d'abord") interpolated into inline JS. */
-    private fun jsEscape(s: String) = s
-        .replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace("\n", "\\n")
-        .replace("\r", "")
 }

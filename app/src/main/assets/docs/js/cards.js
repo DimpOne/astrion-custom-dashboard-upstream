@@ -2,6 +2,36 @@
 
 const NAME_ENTITY_TYPES = ['source_select'];
 
+// Every HA-backed card type used to have a free-text "Entity ID" input with
+// live autocomplete over every entity Home Assistant has. Now it's a strict
+// picker over the Devices page's catalog (dashboardData.haDevices, added at
+// / -> "+ Add device" -> "Home Assistant Device") — a card can only ever
+// reference a device that's actually in the catalog. Keep HA_DOMAIN_LABEL in
+// sync with docs/js/devices-page.js's own copy if a new HA card type is ever added.
+const HA_DOMAIN_LABEL = {
+  light: 'Light', switch: 'Switch', cover: 'Cover', climate: 'Climate',
+  media_player: 'Media Player', camera: 'Camera', fan: 'Fan', vacuum: 'Vacuum',
+  weather: 'Weather', select: 'Select'
+};
+
+function haEntityFieldHtml(domain, fieldId, label) {
+  const options = (dashboardData.haDevices || []).filter(d => d.domain === domain);
+  if (!options.length) {
+    return `
+      <label>${label}</label>
+      <select id="${fieldId}" disabled><option value="">— none in the catalog —</option></select>
+      <div class="hint">No ${HA_DOMAIN_LABEL[domain] || domain} device in the catalog yet — add one from this device's home page (<code>/</code>) as a "${HA_DOMAIN_LABEL[domain] || domain}", then come back here.</div>
+    `;
+  }
+  return `
+    <label>${label}</label>
+    <select id="${fieldId}">
+      <option value="">— select —</option>
+      ${options.map(d => `<option value="${d.entityId}">${d.name}</option>`).join('')}
+    </select>
+  `;
+}
+
 function updateCardFormInputs() {
   const type = document.getElementById('cardTypeSelect').value;
   const container = document.getElementById('dynamicCardInputs');
@@ -9,7 +39,7 @@ function updateCardFormInputs() {
   if (NAME_ENTITY_TYPES.includes(type)) {
     container.innerHTML = `
       <label>Name</label><input type="text" id="optName" placeholder="e.g., Living Room">
-      <label>Entity ID</label><input type="text" id="optEntityId" placeholder="e.g., light.living_room">
+      ${haEntityFieldHtml('media_player', 'optEntityId', 'Media player')}
       ${iconFieldHtml('optIcon')}
     `;
   } else if (type === 'title') {
@@ -31,14 +61,14 @@ function updateCardFormInputs() {
   } else if (type === 'switch') {
     container.innerHTML = `
       <label>Name</label><input type="text" id="optName" placeholder="e.g., Living Room">
-      <label>Entity ID</label><input type="text" id="optEntityId" placeholder="e.g., switch.living_room">
+      ${haEntityFieldHtml('switch', 'optEntityId', 'Switch')}
       <label>"On" color (optional, ARGB hex — defaults to green)</label>${colorFieldHtml('optOnColor', '', '#FF2E5A46')}
       ${iconFieldHtml('optIcon')}
     `;
   } else if (type === 'cover') {
     container.innerHTML = `
       <label>Name (optional, defaults to the entity's friendly name)</label><input type="text" id="optName" placeholder="e.g., Volet Chambre">
-      <label>Entity ID</label><input type="text" id="optEntityId" placeholder="e.g., cover.volet_chambre">
+      ${haEntityFieldHtml('cover', 'optEntityId', 'Cover')}
       ${iconFieldHtml('optIcon')}
       <label>Layout</label>
       <select id="optCoverLayout">
@@ -57,7 +87,7 @@ function updateCardFormInputs() {
   } else if (type === 'select') {
     container.innerHTML = `
       <label>Name (optional, defaults to the entity's friendly name)</label><input type="text" id="optName" placeholder="e.g., Living room output">
-      <label>Entity ID</label><input type="text" id="optEntityId" placeholder="e.g., input_select.video_output_living_room">
+      ${haEntityFieldHtml('select', 'optEntityId', 'Select')}
       <label>Icon color (optional, hex — tints the icon, same as the Mushroom select card's own icon_color)</label><input type="text" id="optSelectIconColor" placeholder="#6EA8FE">
       <label>Layout</label>
       <select id="optSelectLayout">
@@ -70,7 +100,7 @@ function updateCardFormInputs() {
   } else if (type === 'light') {
     container.innerHTML = `
       <label>Name (optional, defaults to the entity's friendly name)</label><input type="text" id="optName" placeholder="e.g., Kitchen">
-      <label>Entity ID</label><input type="text" id="optEntityId" placeholder="e.g., light.kitchen">
+      ${haEntityFieldHtml('light', 'optEntityId', 'Light')}
       <label>Layout</label>
       <select id="optLightLayout">
         <option value="default">Default (icon + name/state, controls full-width below)</option>
@@ -91,7 +121,7 @@ function updateCardFormInputs() {
   } else if (type === 'media_player') {
     container.innerHTML = `
       <label>Name (optional override — otherwise the media title/friendly name is used)</label><input type="text" id="optName" placeholder="e.g., Salon">
-      <label>Entity ID</label><input type="text" id="optEntityId" placeholder="e.g., media_player.nest_hub_max_salon">
+      ${haEntityFieldHtml('media_player', 'optEntityId', 'Media player')}
       <label>Variant</label>
       <select id="optMediaVariant">
         <option value="compact">Compact (Mushroom-style tile, for a grid/list of players)</option>
@@ -126,7 +156,7 @@ function updateCardFormInputs() {
   } else if (type === 'camera') {
     container.innerHTML = `
       <label>Name (optional, defaults to the entity's friendly name)</label><input type="text" id="optName" placeholder="e.g., Front Door">
-      <label>Entity ID</label><input type="text" id="optEntityId" placeholder="e.g., camera.front_door">
+      ${haEntityFieldHtml('camera', 'optEntityId', 'Camera')}
       <label>Mode</label>
       <select id="optCameraMode">
         <option value="stream">Live stream (MJPEG — real motion)</option>
@@ -150,7 +180,7 @@ function updateCardFormInputs() {
   } else if (type === 'fan') {
     container.innerHTML = `
       <label>Name</label><input type="text" id="optName" placeholder="e.g., Standing Fan">
-      <label>Entity ID</label><input type="text" id="optEntityId" placeholder="e.g., fan.mi_smart_standing_fan_2">
+      ${haEntityFieldHtml('fan', 'optEntityId', 'Fan')}
       <label>Layout</label>
       <select id="optFanStyle">
         <option value="auto">Auto (detect from entity)</option>
@@ -170,7 +200,7 @@ function updateCardFormInputs() {
   } else if (type === 'climate') {
     container.innerHTML = `
       <label>Name</label><input type="text" id="optName" placeholder="e.g., Living Room AC">
-      <label>Entity ID</label><input type="text" id="optEntityId" placeholder="e.g., climate.living_room">
+      ${haEntityFieldHtml('climate', 'optEntityId', 'Climate')}
       <label>HVAC modes override (optional, comma-separated, in display order — normally read from the entity)</label><input type="text" id="optHvacModes" placeholder="heat_cool,cool">
       <label>HVAC mode display</label>
       <select id="optHvacModeStyle">
@@ -221,13 +251,13 @@ function updateCardFormInputs() {
           </select>
           <input type="text" id="giIrCommand" list="giIrCommandHints" placeholder="command id, e.g. power, hdmi1, volume_up">
           <datalist id="giIrCommandHints"></datalist>
-          ${(dashboardData.irDevices || []).length === 0 ? '<div class="hint">No IR devices yet — create one in the "IR Devices" section below, then come back here.</div>' : ''}
+          ${(dashboardData.irDevices || []).length === 0 ? '<div class="hint">No IR devices yet — add one from this device\'s home page, then come back here.</div>' : ''}
           <label>Composed Activity (sequences multiple devices) — OR —</label>
           <select id="giActivityRef">
             <option value="">— none —</option>
             ${(dashboardData.activities || []).map(a => `<option value="${a.id}">${a.name} (${a.room})</option>`).join('')}
           </select>
-          ${(dashboardData.activities || []).length === 0 ? '<div class="hint">No Activities yet — create one in the "Activities" section below for multi-device setups (e.g. IR-only, no Harmony/HA).</div>' : ''}
+          ${(dashboardData.activities || []).length === 0 ? '<div class="hint">No Activities yet — create one in the "Activities" section below for multi-device setups (e.g. IR-only, no Harmony/HA).</div>' : '<div class="hint">Saving this tile sets this as the Activity\'s page (its own "Page to open" above if set, otherwise whichever page this card is on) \u2014 used by the Active Activities overlay\'s tap-to-navigate, and to bind the physical volume keys if this Activity has a volume device set.</div>'}
           <label>Color (optional, ARGB hex — defaults to the standard tile color)</label>${colorFieldHtml('giColor', '', '#66009688')}
           <div class="divider" style="margin:12px 0"></div>
           <label><input type="checkbox" id="giTrack" onchange="onGiTrackChange()"> Track as Activity</label>
@@ -259,7 +289,7 @@ function updateCardFormInputs() {
     `;
   } else if (type === 'clock_weather') {
     container.innerHTML = `
-      <label>Weather entity ID</label><input type="text" id="optEntityId" placeholder="e.g., weather.forecast_home">
+      ${haEntityFieldHtml('weather', 'optEntityId', 'Weather')}
       <label>Time format</label>
       <select id="optTimeFormat">
         <option value="12">12-hour (e.g., 9:41 PM)</option>
@@ -272,7 +302,7 @@ function updateCardFormInputs() {
   } else if (type === 'vacuum') {
     container.innerHTML = `
       <label>Name (optional, defaults to the entity's friendly name)</label><input type="text" id="optName" placeholder="e.g., Robot vacuum">
-      <label>Vacuum entity ID</label><input type="text" id="optEntityId" placeholder="e.g., vacuum.roborock">
+      ${haEntityFieldHtml('vacuum', 'optEntityId', 'Vacuum')}
       <label>Map image entity (optional)</label><input type="text" id="optMapImage" placeholder="e.g., image.roborock_map">
       <label>Map rotation (degrees clockwise)</label><input type="number" id="optMapRotation" value="0" step="90">
       <label>Map height (px)</label><input type="number" id="optMapHeight" value="200" min="0">
@@ -326,18 +356,15 @@ function updateCardFormInputs() {
 
   // Attach live entity autocomplete to whichever entity_id fields this card
   // type created. Only attaches when /ha-states data is available (device mode
-  // + HA connected); otherwise the inputs stay plain text fields.
-  const mainDomain = type === 'clock_weather' ? 'weather'
-    : type === 'source_select' ? null
-    : type === 'select' ? ['select', 'input_select']
-    : type;
-  ['optEntityId', 'optRemoteEntity', 'optMediaEntity', 'optMuteEntity',
+  // + HA connected); otherwise the inputs stay plain text fields. optEntityId
+  // itself is excluded — it's now a strict <select> over the Devices catalog
+  // (see haEntityFieldHtml above), not a free-text field to autocomplete.
+  ['optRemoteEntity', 'optMediaEntity', 'optMuteEntity',
     'optCalendarEntity', 'optMapImage', 'giEntityId',
     'optPlexMediaEntity', 'optPlexPlayEntity'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
-    const dom = id === 'optEntityId' ? mainDomain
-      : id === 'optRemoteEntity' ? 'remote'
+    const dom = id === 'optRemoteEntity' ? 'remote'
       : id === 'optMediaEntity' ? 'media_player'
       : id === 'optMuteEntity' ? 'media_player'
       : id === 'optCalendarEntity' ? 'calendar'
@@ -381,8 +408,9 @@ function onGiTrackChange() {
  * inline devices (their commands map is right there in dashboardData).
  * For an ir-database *reference* device, the real command list only
  * exists on the phone at runtime (the sdcard file); the best this builder
- * can do is suggest whatever ids you typed into "known command ids" while
- * creating that device (see saveIrDevice/irDeviceCommandHints in ir.js) —
+ * can do is suggest whatever ids were typed into "known command ids" while
+ * creating that device — saved as that device's own `commandHints` field
+ * in dashboard.json (see saveIrDevice() in docs/js/devices-page.js) —
  * giIrCommand is a plain text input specifically so an unlisted id still
  * works fine, it's just not autocompleted.
  */
@@ -391,9 +419,7 @@ function onGiIrDeviceChange() {
   const datalist = document.getElementById('giIrCommandHints');
   const device = (dashboardData.irDevices || []).find(d => d.id === deviceId);
   if (!device) { datalist.innerHTML = ''; return; }
-  const ids = device.commands
-    ? Object.keys(device.commands)
-    : (typeof irDeviceCommandHints !== 'undefined' ? (irDeviceCommandHints[deviceId] || []) : []);
+  const ids = device.commands ? Object.keys(device.commands) : (device.commandHints || []);
   datalist.innerHTML = ids.map(id => `<option value="${id}">`).join('');
 }
 
@@ -561,7 +587,29 @@ function addGridItem(type) {
     if (page) item.page = page;
     if (irDevice && irCommand) { item.irDevice = irDevice; item.irCommand = irCommand; }
     else if (irDevice && !irCommand) { alert('Pick an IR command, or clear the IR device field.'); return; }
-    if (activityRef) item.activity = activityRef;
+    if (activityRef) {
+      item.activity = activityRef;
+      // Binding volume keys AND the Activity's own "page" here (not in the
+      // Activity itself, which was removed — see activities.js's
+      // writeVolumeHotkeysForActivity doc) because a card is the one place
+      // this Activity's page is actually unambiguous: an explicit override
+      // on this tile (`page`, set right above) if there is one, otherwise
+      // the page this card is on right now.
+      //
+      // activity.page specifically also drives the "Active Activities"
+      // overlay in Dashboard.kt — tapping a running activity there
+      // navigates via activity.page (only tappable when it's set) — so
+      // this isn't just for volume hotkeys, an Activity placed on zero
+      // cards legitimately has no page and that overlay entry just won't
+      // be tappable, same as it never was for an Activity with no page set
+      // before this catalog redesign.
+      const activity = (dashboardData.activities || []).find(a => a.id === activityRef);
+      const targetPage = item.page || (dashboardData.pages[currentActivePage] || {}).name;
+      if (activity && targetPage) {
+        activity.page = targetPage;
+        writeVolumeHotkeysForActivity(activity, targetPage);
+      }
+    }
     if (color) item.color = color;
 
     const harmonyMode = document.getElementById('giHarmonyMode')?.value || '';
@@ -678,12 +726,31 @@ function editCard(idx) {
   openCardDialog(idx);
 }
 
+// Sets an HA entity <select>'s value safely — if entityId isn't one of the
+// catalog options (an old dashboard from before this feature, or a card
+// edited via raw JSON with an entity that was never added to the catalog),
+// a select's .value setter just silently fails to select anything, and
+// re-saving the form would then blank out the card's real entity_id. Inject
+// a clearly-labeled extra option instead, so editing never loses data.
+function setEntitySelectValue(elId, entityId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (!entityId) { el.value = ''; return; }
+  if (!Array.from(el.options).some(o => o.value === entityId)) {
+    const opt = document.createElement('option');
+    opt.value = entityId;
+    opt.textContent = entityId + ' (not in catalog)';
+    el.insertBefore(opt, el.firstChild);
+  }
+  el.value = entityId;
+}
+
 function fillCardForm(card) {
   const type = card.type;
   const o = card.options || {};
   if (NAME_ENTITY_TYPES.includes(type)) {
     document.getElementById('optName').value = o.name || '';
-    document.getElementById('optEntityId').value = o.entity_id || '';
+    setEntitySelectValue('optEntityId', o.entity_id);
     document.getElementById('optIcon').value = o.icon || '';
     updateIconThumb('optIcon');
   } else if (type === 'title') {
@@ -696,13 +763,13 @@ function fillCardForm(card) {
     document.getElementById('optTitleColor').value = o.color || '';
   } else if (type === 'switch') {
     document.getElementById('optName').value = o.name || '';
-    document.getElementById('optEntityId').value = o.entity_id || '';
+    setEntitySelectValue('optEntityId', o.entity_id);
     setColorFieldValue('optOnColor', o.on_color || '');
     document.getElementById('optIcon').value = o.icon || '';
     updateIconThumb('optIcon');
   } else if (type === 'cover') {
     document.getElementById('optName').value = o.name || '';
-    document.getElementById('optEntityId').value = o.entity_id || '';
+    setEntitySelectValue('optEntityId', o.entity_id);
     document.getElementById('optIcon').value = o.icon || '';
     updateIconThumb('optIcon');
     document.getElementById('optCoverLayout').value = ['horizontal', 'vertical'].includes(o.layout) ? o.layout : 'default';
@@ -714,12 +781,12 @@ function fillCardForm(card) {
     document.getElementById('optCoverCtrlTilt').checked = o.show_tilt_position_control === true;
   } else if (type === 'select') {
     document.getElementById('optName').value = o.name || '';
-    document.getElementById('optEntityId').value = o.entity_id || '';
+    setEntitySelectValue('optEntityId', o.entity_id);
     document.getElementById('optSelectIconColor').value = o.icon_color || '';
     document.getElementById('optSelectLayout').value = ['horizontal', 'vertical'].includes(o.layout) ? o.layout : 'default';
   } else if (type === 'light') {
     document.getElementById('optName').value = o.name || '';
-    document.getElementById('optEntityId').value = o.entity_id || '';
+    setEntitySelectValue('optEntityId', o.entity_id);
     document.getElementById('optLightLayout').value = ['horizontal', 'vertical'].includes(o.layout) ? o.layout : 'default';
     document.getElementById('optLightUseColor').checked = o.use_light_color === true;
     document.getElementById('optLightShowBrightness').checked = o.show_brightness !== false;
@@ -732,7 +799,7 @@ function fillCardForm(card) {
     document.getElementById('optLightCollapsible').checked = o.collapsible_controls === true;
   } else if (type === 'media_player') {
     document.getElementById('optName').value = o.name || '';
-    document.getElementById('optEntityId').value = o.entity_id || '';
+    setEntitySelectValue('optEntityId', o.entity_id);
     document.getElementById('optMediaVariant').value = o.variant === 'full' ? 'full' : 'compact';
     document.getElementById('optMediaUseInfo').checked = o.use_media_info !== false;
     document.getElementById('optMediaShowVolume').checked = o.show_volume_level === true;
@@ -751,7 +818,7 @@ function fillCardForm(card) {
     updateMediaTopButtonsVisibility();
   } else if (type === 'camera') {
     document.getElementById('optName').value = o.name || '';
-    document.getElementById('optEntityId').value = o.entity_id || '';
+    setEntitySelectValue('optEntityId', o.entity_id);
     document.getElementById('optCameraMode').value = o.mode === 'snapshot' ? 'snapshot' : 'stream';
     document.getElementById('optCameraInterval').value = o.snapshot_interval ?? 2;
     // Snap the aspect dropdown to the stored value when it matches a preset;
@@ -763,7 +830,7 @@ function fillCardForm(card) {
     document.getElementById('optCameraFit').value = o.fit === 'contain' ? 'contain' : 'cover';
   } else if (type === 'fan') {
     document.getElementById('optName').value = o.name || '';
-    document.getElementById('optEntityId').value = o.entity_id || '';
+    setEntitySelectValue('optEntityId', o.entity_id);
     document.getElementById('optFanStyle').value = ['simple', 'step', 'full'].includes(o.style) ? o.style : 'auto';
     document.getElementById('optFanPresetModes').value = (o.preset_modes || []).join(',');
     document.getElementById('optFanStep').value = o.step ?? 20;
@@ -771,7 +838,7 @@ function fillCardForm(card) {
     document.getElementById('optFanShowCaptions').checked = o.show_captions !== false;
   } else if (type === 'climate') {
     document.getElementById('optName').value = o.name || '';
-    document.getElementById('optEntityId').value = o.entity_id || '';
+    setEntitySelectValue('optEntityId', o.entity_id);
     document.getElementById('optHvacModes').value = (o.hvac_modes || []).join(',');
     document.getElementById('optHvacModeStyle').value = o.hvac_mode_style === 'label' ? 'label' : 'icons';
     document.getElementById('optFanModes').value = (o.fan_modes || []).join(',');
@@ -796,13 +863,13 @@ function fillCardForm(card) {
     document.getElementById('optMediaEntity').value = o.media_entity || '';
     document.getElementById('optMuteEntity').value = o.mute_entity || '';
   } else if (type === 'clock_weather') {
-    document.getElementById('optEntityId').value = o.entity_id || '';
+    setEntitySelectValue('optEntityId', o.entity_id);
     document.getElementById('optTimeFormat').value = (o.time_format === 24) ? '24' : '12';
     document.getElementById('optForecastRows').value = (o.forecast_rows ?? 4);
     document.getElementById('optCalendarEntity').value = o.calendar_entity || '';
   } else if (type === 'vacuum') {
     document.getElementById('optName').value = o.name || '';
-    document.getElementById('optEntityId').value = o.entity_id || '';
+    setEntitySelectValue('optEntityId', o.entity_id);
     document.getElementById('optMapImage').value = o.map_image || '';
     document.getElementById('optMapRotation').value = o.map_rotation ?? 0;
     document.getElementById('optMapHeight').value = o.map_height ?? 200;
@@ -1099,8 +1166,8 @@ function removeCard(idx) {
 // device filesystem directly, but when this page is served by the remote's
 // own local web server (http://<remote-ip>:8080/builder/) that server also
 // exposes those files at /icons/<filename> (see ConfigServer.kt), so we just
-// point an <img> there and gracefully fall back (blank/no icon) if it 404s —
-// e.g. when running the standalone GitHub Pages copy with no device behind it.
+// point an <img> there and gracefully fall back (blank/no icon) if it 404s
+// — e.g. briefly, before the initial /dashboard.json load finishes.
 function iconUrl(path) {
   if (!path) return null;
   const name = String(path).split(/[\\/]/).pop();
@@ -1194,11 +1261,7 @@ let iconPickerTarget = null;
 
 // Opens the icon-picker modal for the given field id, listing every icon
 // already uploaded to the device (GET /icons-list, see ConfigServer.kt) as
-// clickable thumbnails. Only resolves anything when this copy of the builder
-// is served by the device itself (http://<remote-ip>:8080/builder/) — the
-// standalone GitHub Pages copy, or opening index.html straight from disk,
-// has no device behind it to list icons from, so the grid explains that
-// instead of silently doing nothing.
+// clickable thumbnails.
 async function openIconPicker(targetId) {
   iconPickerTarget = targetId;
   const grid = document.getElementById('iconPickerGrid');

@@ -47,7 +47,7 @@ const ANDROID_TV_COMMANDS = [
 ];
 
 // Returns the command list to suggest for a given remote entity, or null
-// when no live HA state is available (GitHub Pages / HA offline). Prefers
+// when no live HA state is available (HA not configured, or offline). Prefers
 // the entity's own `commands_list` attribute when present; otherwise falls
 // back to the built-in Android TV keymap.
 function remoteCommandSuggestions(entityId) {
@@ -431,12 +431,12 @@ async function toggleBetaBadge() {
     badge.innerHTML = t('betaUnavailable');
     return;
   }
-  // In device mode (opened from the remote's own :8080), a real one-click
-  // install button posts to /install-beta-update — same-origin, so it runs
-  // server-side on the remote regardless of which browser/device clicked
-  // it, exactly like the existing official-update button. Outside device
-  // mode (e.g. GitHub Pages) there's no known device IP to target, so the
-  // plain download link from fetchReleaseBadge stays as the fallback.
+  // A real one-click install button posts to /install-beta-update —
+  // same-origin, so it runs server-side on the remote regardless of which
+  // browser/device clicked it, exactly like the existing official-update
+  // button. Only shown once dashboard.json has actually finished loading
+  // (deviceModeAvailable); until then the plain download link from
+  // fetchReleaseBadge stays as the fallback.
   if (typeof deviceModeAvailable !== 'undefined' && deviceModeAvailable) {
     const label = html.replace(/ — <a[^>]*>.*?<\/a>/, '');
     badge.innerHTML = `${label} — <button type="button" onclick="installBetaUpdate(this)" style="padding:4px 10px;font-size:0.8rem">${t('installToDevice')}</button>`;
