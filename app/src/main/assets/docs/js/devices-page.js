@@ -272,7 +272,12 @@ async function saveHarmonyHub() {
     if (hub) { hub.name = name; hub.ip = ip; hub.hubId = hubId; }
   } else {
     harmonyHubs.push({
-      localId: 'hub_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      // Deterministic when hubId is known — same physical hub always maps
+      // back to the same localId, even if it was deleted and re-added, so
+      // existing hotkeys/scenes referencing it self-heal instead of going
+      // orphaned. Only falls back to a random id if hubId isn't set yet
+      // (e.g. user hasn't run "Detect" / entered it manually).
+      localId: hubId ? 'hub_' + hubId : 'hub_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       name, ip, hubId
     });
   }

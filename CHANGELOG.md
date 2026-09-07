@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.1-beta] - 2026-09-07
+
+### Fixed
+
+- **Harmony IR commands sent to the hub didn't match the button actually pressed, so some (or most) buttons silently did nothing.** `HarmonyHubClient.parseConfig()` used a Harmony device's `function.name`/`.label` fields as the literal IR command sent via `sendCommand()` — but those are just the hub's own display labels and can differ from the real command it expects (e.g. a button labeled "Select" whose actual IR command is `"OK"`, nested inside the function's `action` field as `{"command":"OK",...}`). Sending the display label instead of the real command meant the hub simply ignored it — no error, no feedback, just a dead button. `parseConfig()` now extracts the command from `action.command` when present, falling back to `name` only if `action` is missing or malformed; `label` still drives what's shown in the UI. Split `parseConfig()` into smaller `parseDevices()`/`parseDevice()`/`parseFunctions()`/`parseCommand()`/`extractIrCommand()`/`parseActivities()` helpers along the way — the added branching pushed cyclomatic complexity past detekt's threshold in one function.
+- **A Harmony hub's `localId` changed every time it was removed and re-added, even for the exact same physical hub, orphaning any hotkey or scene tile referencing it.** `saveHarmonyHub()` (web configurator, `/`) generated a random `localId` (`'hub_' + Date.now()... + Math.random()...`) for every new hub row, with no link to the hub's own identity. Deleting a hub and adding it back — same IP, same Logitech `hubId` — produced a brand-new `localId`, silently breaking every `dashboard.json` reference (`"hub": "hub_..."`) built against the old one. `localId` is now derived deterministically from the hub's own `hubId` when known (`'hub_' + hubId`), so re-adding the same physical hub restores the same `localId` and existing references keep working; only falls back to a random id when `hubId` isn't set yet (e.g. before running "Detect"). Same fallback logic mirrored server-side in `ConfigServer.kt`'s `parseHubRows()` for consistency. Not retroactive — hubs already carrying a random `localId` from before this fix aren't remapped.
+
 ## [1.1.0] - 2026-09-06
 
 ### Added
