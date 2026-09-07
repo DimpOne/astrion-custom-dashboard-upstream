@@ -984,7 +984,9 @@ class ConfigServer(
             if (name.isBlank() && ip.isBlank() && hubId.isBlank()) return@mapNotNull null // empty "+" row never filled in
 
             val existingLocalId = ids.getOrNull(i).orEmpty().trim()
-            val localId = existingLocalId.ifBlank { UUID.randomUUID().toString() }
+            val localId = existingLocalId.ifBlank {
+                hubId.takeIf { it.isNotBlank() }?.let { "hub_$it" } ?: UUID.randomUUID().toString()
+            }
             HarmonyHubConfig(
                 localId = localId,
                 name = name.ifBlank { "Harmony Hub" },
