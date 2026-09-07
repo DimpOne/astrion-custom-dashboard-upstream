@@ -348,7 +348,8 @@ const RELEASE_STRINGS = {
     stableUnavailable: 'Official release unavailable',
     betaUnavailable: 'Beta unavailable',
     downloadApk: 'download the APK',
-    installToDevice: 'Install on this device',
+    installOfficial: 'Install this official update',
+    installBeta: 'Install this beta update',
     installing: 'Installing…',
     installStarted: 'Install launched on the remote.',
     installFailed: 'Install failed: ',
@@ -359,7 +360,8 @@ const RELEASE_STRINGS = {
     stableUnavailable: 'Version officielle indisponible',
     betaUnavailable: 'Bêta indisponible',
     downloadApk: "télécharger l'APK",
-    installToDevice: 'Installer sur cet appareil',
+    installOfficial: 'Installer cette version officielle',
+    installBeta: 'Installer cette bêta',
     installing: 'Installation…',
     installStarted: 'Installation lancée sur la télécommande.',
     installFailed: "Échec de l'installation : ",
@@ -415,7 +417,16 @@ async function loadStableBadge() {
   const html = await fetchReleaseBadge(
     'https://api.github.com/repos/dckiller51/astrion-custom-dashboard/releases/latest', '✅'
   );
-  badge.innerHTML = html || t('stableUnavailable');
+  if (!html) {
+    badge.innerHTML = t('stableUnavailable');
+    return;
+  }
+  if (typeof deviceModeAvailable !== 'undefined' && deviceModeAvailable) {
+    const label = html.replace(/ — <a[^>]*>.*?<\/a>/, '');
+    badge.innerHTML = `${label} — <button type="button" onclick="installStableUpdate(this)" style="padding:4px 10px;font-size:0.8rem">${t('installOfficial')}</button>`;
+  } else {
+    badge.innerHTML = html;
+  }
 }
 
 async function toggleBetaBadge() {
@@ -431,17 +442,27 @@ async function toggleBetaBadge() {
     badge.innerHTML = t('betaUnavailable');
     return;
   }
-  // A real one-click install button posts to /install-beta-update —
-  // same-origin, so it runs server-side on the remote regardless of which
-  // browser/device clicked it, exactly like the existing official-update
-  // button. Only shown once dashboard.json has actually finished loading
-  // (deviceModeAvailable); until then the plain download link from
-  // fetchReleaseBadge stays as the fallback.
   if (typeof deviceModeAvailable !== 'undefined' && deviceModeAvailable) {
     const label = html.replace(/ — <a[^>]*>.*?<\/a>/, '');
-    badge.innerHTML = `${label} — <button type="button" onclick="installBetaUpdate(this)" style="padding:4px 10px;font-size:0.8rem">${t('installToDevice')}</button>`;
+    badge.innerHTML = `${label} — <button type="button" onclick="installBetaUpdate(this)" style="padding:4px 10px;font-size:0.8rem">${t('installBeta')}</button>`;
   } else {
     badge.innerHTML = html;
+  }
+}
+
+async function installStableUpdate(btn) {
+  const original = btn.textContent;
+  btn.textContent = t('installing');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/install-update', { method: 'POST' });
+    const text = await res.text();
+    if (!res.ok) throw new Error(text || ('HTTP ' + res.status));
+    showToast(t('installStarted'));
+  } catch (e) {
+    showToast(t('installFailed') + e.message, 'error');
+    btn.textContent = original;
+    btn.disabled = false;
   }
 }
 
