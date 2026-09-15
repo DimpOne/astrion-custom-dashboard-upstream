@@ -17,10 +17,12 @@
 
 let haConfig = { url: '', token: '', webhookId: '' };
 let harmonyHubs = [];      // full [{localId, name, ip, hubId}]
+let extenders = [];        // full [{localId, name, host}]
 let fullDashboard = null;  // raw dashboard.json, round-tripped untouched except irDevices
 let dashboardData = { irDevices: [], haDevices: [] }; // irDevices/haDevices editing lives here, mirroring the builder's own global of the same name
 
 let editingHarmonyHubId = null;
+let editingExtenderId = null;
 let editingIrDevice = null;
 let editingHaDevice = null;
 let haStates = null; // { entity_id: {state, friendly_name, attributes} }, from /ha-states
@@ -55,6 +57,7 @@ async function loadAll() {
     const data = await res.json();
     haConfig = data.ha || { url: '', token: '', webhookId: '' };
     harmonyHubs = Array.isArray(data.harmonyHubs) ? data.harmonyHubs : [];
+    extenders = Array.isArray(data.extenders) ? data.extenders : [];
   } catch (e) {
     showToast("Couldn't reach this device — check the connection, then reload this page.", 'error');
     console.error('Failed to load /devices-config', e);
@@ -120,6 +123,23 @@ function renderDevicesList() {
       : '<div class="hint">No hub yet.</div>';
   }
 
+  const tileExtenderCount = document.getElementById('tileExtenderCount');
+  if (tileExtenderCount) {
+    tileExtenderCount.textContent = extenders.length
+      ? `${extenders.length} extender${extenders.length === 1 ? '' : 's'}`
+      : 'No extender yet';
+  }
+  const extenderList = document.getElementById('extendersList');
+  if (extenderList) {
+    extenderList.innerHTML = extenders.length
+      ? extenders.map(ext => {
+          const summary = [ext.host || 'no host set', ext.mac ? 'MAC ' + ext.mac : null].filter(Boolean).join(' · ');
+          return `<div class="list-item"><span>${ext.name} <span style="color:#888">(${summary})</span></span>` +
+            `<span><span class="remove" style="color:#00E5FF" onclick="editExtender('${ext.localId}')">✎</span> <span class="remove" onclick="removeExtender('${ext.localId}')">✕</span></span></div>`;
+        }).join('')
+      : '<div class="hint">No extender yet.</div>';
+  }
+
   const tileIrCount = document.getElementById('tileIrCount');
   if (tileIrCount) {
     tileIrCount.textContent = dashboardData.irDevices.length
@@ -156,8 +176,10 @@ function closeDeviceForms() {
   document.getElementById('haForm').style.display = 'none';
   document.getElementById('haEntityForm').style.display = 'none';
   document.getElementById('harmonyForm').style.display = 'none';
+  document.getElementById('extenderForm').style.display = 'none';
   document.getElementById('irForm').style.display = 'none';
   editingHarmonyHubId = null;
+  editingExtenderId = null;
   editingIrDevice = null;
   editingHaDevice = null;
 }
@@ -187,12 +209,34 @@ async function openDeviceForm(type) {
     document.getElementById('saveHarmonyHubBtn').textContent = 'Save';
     document.getElementById('removeHarmonyHubBtn').style.display = 'none';
     document.getElementById('harmonyForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } else if (type === 'extender') {
+    document.getElementById('extenderForm').style.display = '';
+    document.getElementById('extenderName').value = '';
+    document.getElementById('extenderHost').value = '';
+    document.getElementById('extenderMac').value = '';
+    editingExtenderId = null;
+    document.getElementById('saveExtenderBtn').textContent = 'Save';
+    document.getElementById('removeExtenderBtn').style.display = 'none';
+    document.getElementById('extenderForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
   } else if (type === 'ir') {
     document.getElementById('irForm').style.display = '';
+    renderIrTargetOptions();
     cancelIrDeviceEdit();
     document.getElementById('removeIrDeviceBtn').style.display = 'none';
     document.getElementById('irForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
+}
+
+/** Rebuilds the "where do commands get sent from" dropdown from the
+ * current `extenders` list. Called every time the IR device form opens,
+ * so it stays current even if an extender was just added/removed. */
+function renderIrTargetOptions() {
+  const select = document.getElementById('irTargetSelect');
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = '<option value="">— this remote\'s own IR blaster —</option>' +
+    extenders.map(ext => `<option value="${ext.localId}">${ext.name}</option>`).join('');
+  if (extenders.some(ext => ext.localId === current)) select.value = current;
 }
 
 // ---- Home Assistant ----------------------------------------------------------
@@ -212,9 +256,9 @@ async function removeHa() {
   await persistHaAndHubs();
 }
 
-/** Always resends the full Harmony hub list alongside HA fields —
- * /save-connection replaces both together, so omitting hubs here would
- * wipe them even though this form never touched them. */
+/** Always resends the full Harmony hub AND extender lists alongside HA
+ * fields — /save-connection replaces all three together, so omitting
+ * either here would wipe it even though this form never touched it. */
 async function persistHaAndHubs() {
   const btn = document.activeElement;
   const originalText = btn ? btn.textContent : null;
@@ -229,6 +273,12 @@ async function persistHaAndHubs() {
       body.append('hub_name[]', hub.name || '');
       body.append('hub_ip[]', hub.ip || '');
       body.append('hub_hubid[]', hub.hubId || '');
+    });
+    extenders.forEach(ext => {
+      body.append('extender_localid[]', ext.localId || '');
+      body.append('extender_name[]', ext.name || '');
+      body.append('extender_host[]', ext.host || '');
+      body.append('extender_mac[]', ext.mac || '');
     });
     const res = await fetch('/save-connection', {
       method: 'POST',
@@ -272,12 +322,7 @@ async function saveHarmonyHub() {
     if (hub) { hub.name = name; hub.ip = ip; hub.hubId = hubId; }
   } else {
     harmonyHubs.push({
-      // Deterministic when hubId is known — same physical hub always maps
-      // back to the same localId, even if it was deleted and re-added, so
-      // existing hotkeys/scenes referencing it self-heal instead of going
-      // orphaned. Only falls back to a random id if hubId isn't set yet
-      // (e.g. user hasn't run "Detect" / entered it manually).
-      localId: hubId ? 'hub_' + hubId : 'hub_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      localId: 'hub_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       name, ip, hubId
     });
   }
@@ -292,6 +337,80 @@ async function removeHarmonyHub(localId) {
 
 async function removeHarmonyHubFromForm() {
   if (editingHarmonyHubId !== null) await removeHarmonyHub(editingHarmonyHubId);
+}
+
+// ---- Astrion IR Extender ---------------------------------------------------
+
+/** Strips separators and lowercases, so the same physical MAC always maps to
+ * the same id no matter how it was typed (2C:B4:71:FF:C7:98, 2c-b4-71-ff-c7-98,
+ * 2cb471ffc798 are all the same extender). Returns '' if it isn't 12 hex
+ * digits once cleaned. */
+function normalizeMac(raw) {
+  const cleaned = (raw || '').replace(/[^0-9a-fA-F]/g, '').toLowerCase();
+  return cleaned.length === 12 ? cleaned : '';
+}
+
+function editExtender(localId) {
+  const ext = extenders.find(e => e.localId === localId);
+  if (!ext) return;
+  openDeviceForm('extender');
+  editingExtenderId = localId;
+  document.getElementById('extenderName').value = ext.name || '';
+  document.getElementById('extenderHost').value = ext.host || '';
+  document.getElementById('extenderMac').value = ext.mac || '';
+  document.getElementById('saveExtenderBtn').textContent = 'Save';
+  document.getElementById('removeExtenderBtn').style.display = '';
+}
+
+async function saveExtender() {
+  const name = document.getElementById('extenderName').value.trim();
+  const host = document.getElementById('extenderHost').value.trim();
+  const macRaw = document.getElementById('extenderMac').value.trim();
+  if (!name) { alert('Give this extender a name.'); return; }
+  if (!host) { alert("Enter the extender's IP address or hostname."); return; }
+  const mac = normalizeMac(macRaw);
+  if (!mac) {
+    alert("Enter the extender's MAC address (12 hex digits, e.g. 2C:B4:71:FF:C7:98).\n\nYou'll find it on the extender's own web page: open http://" + host + "/ and look for \"Mac Address\".");
+    return;
+  }
+
+  // localId is derived from the MAC, never random: IR devices reference an
+  // extender by this id, so it has to survive a rename, an IP change, or a
+  // remove-and-re-add of the same physical unit. (A random id here is
+  // exactly the bug already fixed once for Harmony hubs -- and hit again
+  // in testing here, before this field existed.)
+  const localId = 'ext_' + mac;
+  const existing = extenders.find(e => e.localId === localId);
+
+  if (editingExtenderId !== null) {
+    const ext = extenders.find(e => e.localId === editingExtenderId);
+    if (!ext) return;
+    if (localId !== editingExtenderId && existing) {
+      alert('Another extender ("' + existing.name + '") already uses that MAC address.');
+      return;
+    }
+    ext.localId = localId; // may change if the MAC was corrected
+    ext.name = name;
+    ext.host = host;
+    ext.mac = mac;
+  } else {
+    if (existing) {
+      alert('An extender with that MAC address already exists ("' + existing.name + '"). Edit that one instead of adding a second entry for the same device.');
+      return;
+    }
+    extenders.push({ localId, name, host, mac });
+  }
+  await persistHaAndHubs();
+}
+
+async function removeExtender(localId) {
+  if (!confirm('Remove this extender? IR devices pointed at it will stop working until you point them elsewhere.\n\n(Re-adding it later with the same MAC address restores the same id, so those devices start working again.)')) return;
+  extenders = extenders.filter(e => e.localId !== localId);
+  await persistHaAndHubs();
+}
+
+async function removeExtenderFromForm() {
+  if (editingExtenderId !== null) await removeExtender(editingExtenderId);
 }
 
 async function discoverHarmonyHubId() {
@@ -707,9 +826,15 @@ function renderIrCommandsList() {
 function editIrDevice(id) {
   const dev = (dashboardData.irDevices || []).find(d => d.id === id);
   if (!dev) return;
-  editingIrDevice = id;
+  // openDeviceForm('ir') calls cancelIrDeviceEdit() internally, which resets
+  // editingIrDevice to null -- must be set AFTER that call, not before, or
+  // saveIrDevice() thinks it's creating a new device and duplicates this one
+  // instead of updating it. (Pre-existing bug, found while wiring the
+  // target selector below -- fixed here rather than left in place.)
   openDeviceForm('ir');
+  editingIrDevice = id;
   document.getElementById('irDevName').value = dev.name;
+  document.getElementById('irTargetSelect').value = (dev.target && dev.target.extender) || '';
 
   const isReference = !dev.commands;
   document.querySelector(`input[name="irSourceMode"][value="${isReference ? 'reference' : 'inline'}"]`).checked = true;
@@ -736,6 +861,8 @@ function cancelIrDeviceEdit() {
   document.getElementById('irRefBrand').value = '';
   document.getElementById('irRefModel').value = '';
   document.getElementById('irRefKnownCommands').value = '';
+  const targetSelect = document.getElementById('irTargetSelect');
+  if (targetSelect) targetSelect.value = '';
   document.querySelector('input[name="irSourceMode"][value="inline"]').checked = true;
   onIrSourceModeChange();
   document.getElementById('saveIrDeviceBtn').textContent = 'Save';
@@ -761,6 +888,18 @@ async function saveIrDevice() {
     const commandHints = rawHints ? rawHints.split(',').map(s => s.trim()).filter(Boolean) : undefined;
     deviceFields = { category, brand, model, commands: undefined, commandHints };
   }
+
+  const targetExtenderId = document.getElementById('irTargetSelect').value;
+  if (targetExtenderId && mode === 'inline') {
+    // Matches IrStepConfig's own limitation on the app side: dashboard.json
+    // only persists already-decoded freq/pattern for hand-pasted commands,
+    // not the original Pronto string an extender needs -- so this can't
+    // actually work yet for inline-sourced devices. Block it here rather
+    // than silently saving a target the app will just warn-and-no-op on.
+    alert('Hand-pasted commands can\'t target an extender yet — only ir-database references can. Switch to "Reference the ir-database", or set this back to "this remote\'s own IR blaster".');
+    return;
+  }
+  deviceFields.target = targetExtenderId ? { extender: targetExtenderId } : undefined;
 
   dashboardData.irDevices = dashboardData.irDevices || [];
   let savedId;

@@ -170,8 +170,40 @@ data class HotkeyConfig(
 data class IrDeviceConfig(
     val id: String,
     val name: String = id,
-    val source: IrDeviceSource
+    val source: IrDeviceSource,
+    /** Where this device's commands actually get transmitted from. Lives
+     * here (per-device), not on individual cards/hotkeys referencing this
+     * device — a device is physically in one place, so every card/hotkey
+     * that sends to it should automatically go the same way without
+     * having to be configured (or risk being mis-configured) separately.
+     * Defaults to [IrTarget.Local] so every existing dashboard.json with
+     * no "target" field at all keeps working exactly as before. */
+    val target: IrTarget = IrTarget.Local
 )
+
+/**
+ * Where an [IrDeviceConfig]'s commands actually get fired from.
+ *
+ * - [Local]: this device's own built-in IR blaster (`ConsumerIrManager`)
+ *   — the only option that has ever existed until now, still the default.
+ * - [Extender]: a network-connected Astrion IR Extender (see the
+ *   astrion-ir-extender project) reached over the LAN, for devices
+ *   that live somewhere the local blaster's line of sight doesn't reach
+ *   (a closed cabinet, a different room). [extenderId] matches a
+ *   registered extender's stable id — same id-by-string-reference
+ *   pattern already used for Harmony hubs (`HotkeyConfig.hub` against
+ *   `HarmonyHubConfig.localId`), rather than embedding the extender's
+ *   full config inline here. The registry that owns those ids (a
+ *   "Devices" screen, name+IP+MAC-derived localId, mirroring the Harmony
+ *   hub registry) doesn't exist yet — this is just the reference shape
+ *   the model is ready for once it does.
+ */
+@Suppress("Unused")
+sealed class IrTarget {
+    data object Local : IrTarget()
+
+    data class Extender(val extenderId: String) : IrTarget()
+}
 
 /**
  * Where an [IrDeviceConfig]'s commands come from.
@@ -208,7 +240,21 @@ sealed class IrDeviceSource {
 /** One IR transmission: `freq` (Hz) + `pattern` (alternating on/off
  * durations in µs) map straight onto `ConsumerIrManager.transmit()`. */
 @Suppress("Unused")
-data class IrStepConfig(val freq: Int, val pattern: List<Int>)
+data class IrStepConfig(
+    val freq: Int,
+    val pattern: List<Int>,
+    /** The original Pronto hex string this was decoded from, when known —
+     * populated for [IrDeviceSource.SdCardRef] (the ir-database file
+     * always has it), null for [IrDeviceSource.Inline] (dashboard.json
+     * only ever persists the already-decoded freq/pattern for those, not
+     * the original text). Needed to route a command to an
+     * [IrTarget.Extender], which takes a raw Pronto string, not a decoded
+     * pattern — recomputing one from [pattern] would need the exact
+     * inverse of `prontoToPattern()`, an unnecessary source of subtle
+     * rounding bugs when the original string can just be carried through
+     * instead. */
+    val pronto: String? = null
+)
 
 // NOTE: a *single-action* Activity (one HA script, one existing Harmony
 // Activity — the hub already orchestrates everything for that one — or one

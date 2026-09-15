@@ -18,6 +18,7 @@ import com.custom.astrion.BuildConfig
 import com.custom.astrion.R
 import com.custom.astrion.config.ActivityRuntime
 import com.custom.astrion.config.DashboardLoader
+import com.custom.astrion.config.ExtenderConfig
 import com.custom.astrion.config.HarmonyHubConfig
 import com.custom.astrion.config.IrDatabaseRuntime
 import com.custom.astrion.config.RemoteSettings
@@ -442,6 +443,21 @@ class ConfigServer(
                                     put("name", hub.name)
                                     put("ip", hub.ip)
                                     put("hubId", hub.hubId)
+                                }
+                            )
+                        }
+                    }
+                )
+                put(
+                    "extenders",
+                    JSONArray().apply {
+                        RemoteSettings.extenders(context).forEach { ext ->
+                            put(
+                                JSONObject().apply {
+                                    put("localId", ext.localId)
+                                    put("name", ext.name)
+                                    put("host", ext.host)
+                                    put("mac", ext.mac)
                                 }
                             )
                         }
@@ -965,6 +981,7 @@ class ConfigServer(
             haWebhookId = params["ha_webhook_id"]?.firstOrNull().orEmpty().trim()
         )
         RemoteSettings.saveHarmonyHubs(context, parseHubRows(params))
+        RemoteSettings.saveExtenders(context, parseExtenderRows(params))
         Handler(Looper.getMainLooper()).postDelayed({ onConnectionSaved() }, 500L)
         return redirectHome(context.getString(R.string.web_config_saved_reconnecting))
     }
@@ -984,14 +1001,65 @@ class ConfigServer(
             if (name.isBlank() && ip.isBlank() && hubId.isBlank()) return@mapNotNull null // empty "+" row never filled in
 
             val existingLocalId = ids.getOrNull(i).orEmpty().trim()
-            val localId = existingLocalId.ifBlank {
-                hubId.takeIf { it.isNotBlank() }?.let { "hub_$it" } ?: UUID.randomUUID().toString()
-            }
+            val localId = existingLocalId.ifBlank { UUID.randomUUID().toString() }
             HarmonyHubConfig(
                 localId = localId,
                 name = name.ifBlank { "Harmony Hub" },
                 ip = ip,
                 hubId = hubId
+            )
+        }
+    }
+
+    /**
+     * Mirrors [parseHubRows] above, for the extenders section of the web
+     * form — repeatable rows via `extender_localid[]`/`extender_name[]`/
+     * `extender_host[]`/`extender_mac[]`.
+     *
+     * Unlike Harmony hubs, an extender's localId is *always* derived from
+     * its MAC address (`ext_<12 lowercase hex digits>`), never random:
+     * IR devices reference an extender by this id, so it has to survive a
+     * rename, an IP change, or a remove-and-re-add of the same physical
+     * unit. A random id here is exactly the bug already fixed once for
+     * Harmony hubs (deleting and re-adding the same physical hub silently
+     * orphaned every reference to its old localId) — and it was hit again
+     * here in testing before the form required a MAC.
+     *
+     * The form enforces this client-side too; this is the server-side
+     * guard for anything posting directly. A row whose MAC doesn't clean
+     * up to 12 hex digits falls back to any localId the client already
+     * sent (an existing extender being edited), and is skipped entirely
+     * otherwise rather than silently persisted under an unstable id.
+     */
+    private fun parseExtenderRows(params: Map<String, List<String>>): List<ExtenderConfig> {
+        val ids = params["extender_localid[]"].orEmpty()
+        val names = params["extender_name[]"].orEmpty()
+        val hosts = params["extender_host[]"].orEmpty()
+        val macs = params["extender_mac[]"].orEmpty()
+        val rowCount = maxOf(ids.size, names.size, hosts.size, macs.size)
+
+        return (0 until rowCount).mapNotNull { i ->
+            val name = names.getOrNull(i).orEmpty().trim()
+            val host = hosts.getOrNull(i).orEmpty().trim()
+            if (name.isBlank() && host.isBlank()) return@mapNotNull null // empty "+" row never filled in
+
+            // 12 hex digits once separators are stripped -- accepts
+            // 2C:B4:71:FF:C7:98, 2c-b4-71-ff-c7-98, 2cb471ffc798 alike.
+            val mac = macs.getOrNull(i).orEmpty().filter { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }.lowercase()
+            val existingLocalId = ids.getOrNull(i).orEmpty().trim()
+            val localId = when {
+                mac.length == 12 -> "ext_$mac"
+                existingLocalId.isNotBlank() -> existingLocalId
+                else -> {
+                    Log.w("ConfigServer", "Skipping extender row \"$name\": no usable MAC address and no existing id")
+                    return@mapNotNull null
+                }
+            }
+            ExtenderConfig(
+                localId = localId,
+                name = name.ifBlank { "IR Extender" },
+                host = host,
+                mac = mac
             )
         }
     }

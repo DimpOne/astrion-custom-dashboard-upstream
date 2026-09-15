@@ -12,6 +12,27 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /**
+ * A single Astrion IR Extender (see the astrion-ir-extender project) the
+ * app can send Pronto codes to over the LAN. [localId] is derived from the
+ * extender's MAC address (`ext_<mac>`) rather than random, so the same
+ * physical unit always maps back to the same id even if it's removed and
+ * re-added later — the earlier Harmony hub `localId` bug (random per-add,
+ * silently orphaning every reference on re-add) is deliberately not
+ * repeated here. Referenced from [IrTarget.Extender.extenderId].
+ */
+data class ExtenderConfig(
+    val localId: String,
+    val name: String,
+    /** IP or hostname, no scheme/port — ExtenderClient builds the full
+     * `http://<host>/pronto` URL. */
+    val host: String,
+    /** Normalized to 12 lowercase hex digits, no separators. [localId] is
+     * always `ext_<mac>`; this field keeps the value around so the edit
+     * form can show it back to the user. */
+    val mac: String = ""
+)
+
+/**
  * A single Harmony Hub the app can talk to directly, bypassing Home
  * Assistant. [localId] is a stable app-generated key (independent of the
  * hub's own numeric [hubId]) used to reference this hub from dashboard.json
@@ -41,6 +62,7 @@ object RemoteSettings {
     private const val KEY_HA_TOKEN = "ha_token"
     private const val KEY_HA_WEBHOOK_ID = "ha_webhook_id"
     private const val KEY_HARMONY_HUBS = "harmony_hubs" // JSON array, see HarmonyHubConfig
+    private const val KEY_EXTENDERS = "ir_extenders" // JSON array, see ExtenderConfig
 
     // Legacy single-hub keys (pre-multi-hub). Read once for migration, never written again.
     private const val LEGACY_KEY_HARMONY_IP = "harmony_hub_ip"
@@ -133,6 +155,47 @@ object RemoteSettings {
                 name = obj["name"]?.jsonPrimitive?.content ?: "Harmony Hub",
                 ip = obj["ip"]?.jsonPrimitive?.content ?: "",
                 hubId = obj["hubId"]?.jsonPrimitive?.content ?: ""
+            )
+        }
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    /** All configured IR Extenders, in the order they were added. */
+    fun extenders(context: Context): List<ExtenderConfig> {
+        val raw = prefs(context).getString(KEY_EXTENDERS, null) ?: return emptyList()
+        return parseExtenders(raw)
+    }
+
+    fun saveExtenders(context: Context, extenders: List<ExtenderConfig>) {
+        val array =
+            buildJsonArray {
+                extenders.forEach { ext ->
+                    addJsonObject {
+                        put("localId", ext.localId)
+                        put("name", ext.name)
+                        put("host", ext.host)
+                        put("mac", ext.mac)
+                    }
+                }
+            }
+
+        prefs(context).edit {
+            putString(KEY_EXTENDERS, array.toString())
+        }
+    }
+
+    /** Convenience lookup used to resolve [IrTarget.Extender.extenderId]. */
+    fun extender(context: Context, localId: String): ExtenderConfig? = extenders(context).firstOrNull { it.localId == localId }
+
+    private fun parseExtenders(raw: String): List<ExtenderConfig> = try {
+        json.parseToJsonElement(raw).jsonArray.map { el ->
+            val obj = el.jsonObject
+            ExtenderConfig(
+                localId = obj["localId"]?.jsonPrimitive?.content ?: UUID.randomUUID().toString(),
+                name = obj["name"]?.jsonPrimitive?.content ?: "IR Extender",
+                host = obj["host"]?.jsonPrimitive?.content ?: "",
+                mac = obj["mac"]?.jsonPrimitive?.content ?: ""
             )
         }
     } catch (_: Exception) {
