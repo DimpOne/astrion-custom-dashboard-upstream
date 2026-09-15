@@ -6,6 +6,7 @@ import com.custom.astrion.cards.CardConfig
 import java.io.File
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -212,7 +213,29 @@ object DashboardLoader {
                     "or \"category\"+\"brand\"+\"model\" (a reference into /sdcard/astrion/ir-database/)"
             )
         }
-        return IrDeviceConfig(id, name, source)
+        val target = parseIrTarget(id, obj["target"])
+        return IrDeviceConfig(id, name, source, target)
+    }
+
+    /**
+     * Absent entirely -> [IrTarget.Local], same as every dashboard.json
+     * written before this field existed. `"target": "local"` is the
+     * explicit spelling of the same thing (accepted, never written by the
+     * encoder below — no reason to clutter every device's JSON with the
+     * default). `"target": {"extender": "<id>"}` -> [IrTarget.Extender].
+     */
+    private fun parseIrTarget(deviceId: String, value: JsonElement?): IrTarget = when {
+        value == null -> IrTarget.Local
+        value is JsonPrimitive && value.content == "local" -> IrTarget.Local
+        value is JsonObject && value.containsKey("extender") -> {
+            val extenderId = value["extender"]!!.jsonPrimitive.content
+            if (extenderId.isBlank()) error("irDevice \"$deviceId\" has a blank \"target.extender\" id")
+            IrTarget.Extender(extenderId)
+        }
+        else -> error(
+            "irDevice \"$deviceId\" has an unrecognized \"target\" " +
+                "(expected omitted, \"local\", or {\"extender\": \"<id>\"})"
+        )
     }
 
     private fun parseIrStep(obj: JsonObject): IrStepConfig {
@@ -366,6 +389,13 @@ object DashboardLoader {
                                         put("brand", source.brand)
                                         put("model", source.model)
                                     }
+                                }
+                                when (val target = device.target) {
+                                    IrTarget.Local -> {} // default, omitted rather than written explicitly
+                                    is IrTarget.Extender -> put(
+                                        "target",
+                                        buildJsonObject { put("extender", target.extenderId) }
+                                    )
                                 }
                             }
                         )

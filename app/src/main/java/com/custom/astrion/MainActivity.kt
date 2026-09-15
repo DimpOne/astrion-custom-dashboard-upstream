@@ -40,8 +40,11 @@ import com.custom.astrion.config.DashboardConfig
 import com.custom.astrion.config.DashboardLoader
 import com.custom.astrion.config.HotkeyConfig
 import com.custom.astrion.config.IrDatabaseRuntime
+import com.custom.astrion.config.IrStepConfig
+import com.custom.astrion.config.IrTarget
 import com.custom.astrion.config.JsonPlain
 import com.custom.astrion.config.RemoteSettings
+import com.custom.astrion.extender.ExtenderRegistry
 import com.custom.astrion.ha.HaClient
 import com.custom.astrion.ha.ServiceCall
 import com.custom.astrion.harmony.HarmonyHubRegistry
@@ -49,6 +52,11 @@ import com.custom.astrion.input.HardwareKey
 import com.custom.astrion.input.HardwareKeyRouter
 import com.custom.astrion.ui.ChargingScreen
 import com.custom.astrion.ui.Dashboard
+import com.custom.astrion.ui.DashboardActivityCallbacks
+import com.custom.astrion.ui.DashboardConnection
+import com.custom.astrion.ui.DashboardNavigation
+import com.custom.astrion.ui.DashboardRegistries
+import com.custom.astrion.ui.DashboardUiState
 import com.custom.astrion.ui.ProvideTheme
 import com.custom.astrion.ui.toColors
 import com.custom.astrion.web.ConfigServer
@@ -292,6 +300,7 @@ class MainActivity : ComponentActivity() {
 
     /** Owns one HarmonyHubClient per configured Harmony hub. */
     private lateinit var harmonyRegistry: HarmonyHubRegistry
+    private lateinit var extenderRegistry: ExtenderRegistry
 
     /** Local IR blaster — used by hotkeys with irDevice+irCommand (see
      * runHotkey()) and shared with the composed-Activity switch executor in
@@ -438,6 +447,11 @@ class MainActivity : ComponentActivity() {
                 onError = { hubName, msg -> Log.e("HarmonyHubClient", "[$hubName] $msg") },
                 onHubIdDiscovered = { updatedHubs -> RemoteSettings.saveHarmonyHubs(this, updatedHubs) }
             )
+        extenderRegistry =
+            ExtenderRegistry(
+                extenders = RemoteSettings.extenders(this),
+                onError = { extName, msg -> Log.e("ExtenderClient", "[$extName] $msg") }
+            )
         configServer =
             ConfigServer(
                 context = this,
@@ -499,35 +513,42 @@ class MainActivity : ComponentActivity() {
             val isDocked = chargeDockMonitor.state.isDocked
             Box {
                 Dashboard(
-                    client = client,
-                    harmonyRegistry = harmonyRegistry,
-                    entitiesState = entities,
-                    connectionState = connection,
+                    connection = DashboardConnection(client = client, entitiesState = entities, connectionState = connection),
+                    registries = DashboardRegistries(harmonyRegistry = harmonyRegistry, extenderRegistry = extenderRegistry),
                     config = dashboard.config,
-                    configNotice = dashboard.notice,
-                    navTarget = navTarget,
-                    onNavHandled = { navTarget = null },
-                    overlayTarget = overlayTarget,
-                    onOverlayHandled = { overlayTarget = null },
-                    onPageChanged = { pageIndex ->
-                        currentPageIndex = pageIndex
-                        rebindHotkeysForCurrentPage()
-                    },
-                    deviceSettings =
-                    DeviceSettingsState(
-                        wakeOnMotionEnabled = wakeOnMotionEnabled,
-                        setWakeOnMotionEnabled = { enabled -> setWakeOnMotion(enabled) },
-                        wifiKeepAwakeEnabled = wifiKeepAwakeEnabled,
-                        setWifiKeepAwakeEnabled = { enabled -> setWifiKeepAwake(enabled) },
-                        configServerEnabled = configServerEnabled,
-                        setConfigServerEnabled = { enabled -> updateConfigServerEnabled(enabled) },
-                        tapFeedbackEnabled = tapFeedbackEnabled,
-                        setTapFeedbackEnabled = { enabled -> setTapFeedback(enabled) }
+                    navigation =
+                    DashboardNavigation(
+                        navTarget = navTarget,
+                        onNavHandled = { navTarget = null },
+                        overlayTarget = overlayTarget,
+                        onOverlayHandled = { overlayTarget = null },
+                        onPageChanged = { pageIndex ->
+                            currentPageIndex = pageIndex
+                            rebindHotkeysForCurrentPage()
+                        }
                     ),
-                    screenOn = screenOn && !isDocked,
-                    onActivityRuntimeReady = { activityRuntime = it },
-                    onStartActivityReady = { fn -> startActivityFn = fn },
-                    onStopActivityReady = { fn -> stopActivityFn = fn }
+                    uiState =
+                    DashboardUiState(
+                        configNotice = dashboard.notice,
+                        deviceSettings =
+                        DeviceSettingsState(
+                            wakeOnMotionEnabled = wakeOnMotionEnabled,
+                            setWakeOnMotionEnabled = { enabled -> setWakeOnMotion(enabled) },
+                            wifiKeepAwakeEnabled = wifiKeepAwakeEnabled,
+                            setWifiKeepAwakeEnabled = { enabled -> setWifiKeepAwake(enabled) },
+                            configServerEnabled = configServerEnabled,
+                            setConfigServerEnabled = { enabled -> updateConfigServerEnabled(enabled) },
+                            tapFeedbackEnabled = tapFeedbackEnabled,
+                            setTapFeedbackEnabled = { enabled -> setTapFeedback(enabled) }
+                        ),
+                        screenOn = screenOn && !isDocked
+                    ),
+                    activityCallbacks =
+                    DashboardActivityCallbacks(
+                        onActivityRuntimeReady = { activityRuntime = it },
+                        onStartActivityReady = { fn -> startActivityFn = fn },
+                        onStopActivityReady = { fn -> stopActivityFn = fn }
+                    )
                 )
                 if (isDocked) {
                     val theme = remember(dashboard.config.theme) { dashboard.config.theme.toColors() }
@@ -566,7 +587,7 @@ class MainActivity : ComponentActivity() {
      * simply no longer this page's configured "leave" button. Either way,
      * BACK is never allowed to dismiss the launcher itself (kiosk mode).
      */
-    @Suppress("DEPRECATION")
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
     @SuppressLint("MissingSuperCall") // intentional: BACK is fully intercepted on root pages
     // to keep this a kiosk-mode launcher — see class doc above.
     override fun onBackPressed() {
@@ -680,6 +701,50 @@ class MainActivity : ComponentActivity() {
      *  6. Local IR command (irDevice + irCommand) — no hub, no HA, fully offline
      *  7. Home Assistant service call
      */
+    /** Resolves and routes a hotkey's IR command to wherever `device.target`
+     * points — extracted out of [runHotkey] itself, which was pushed over
+     * detekt's cyclomatic-complexity/nesting-depth thresholds by this
+     * branch when it lived inline. */
+    private fun sendHotkeyIrCommand(irDevice: String, irCommand: String) {
+        val device = dashboard.config.irDevices.firstOrNull { it.id == irDevice }
+        if (device == null) {
+            Log.w("MainActivity", "hotkey irDevice=$irDevice not found in AppConfig.irDevices")
+            return
+        }
+        val irStep = IrDatabaseRuntime.resolve(device, irCommand)
+        if (irStep == null) {
+            Log.w("MainActivity", "hotkey irDevice=$irDevice irCommand=$irCommand not found")
+            return
+        }
+        when (val target = device.target) {
+            // Unchanged from before this device gained a `target` field —
+            // every dashboard.json without one defaults here.
+            IrTarget.Local ->
+                runCatching { irManager?.transmit(irStep.freq, irStep.pattern.toIntArray()) }
+                    .onFailure { Log.e("MainActivity", "hotkey IR send failed: $irDevice/$irCommand", it) }
+            is IrTarget.Extender -> sendHotkeyIrViaExtender(irDevice, irCommand, irStep, target)
+        }
+    }
+
+    private fun sendHotkeyIrViaExtender(irDevice: String, irCommand: String, irStep: IrStepConfig, target: IrTarget.Extender) {
+        val prontoCode = irStep.pronto
+        if (prontoCode == null) {
+            // Inline-sourced devices don't carry the original Pronto string in
+            // dashboard.json today (only the already-decoded freq/pattern) --
+            // only ir-database (SdCardRef) devices can target an extender for
+            // now. See IrStepConfig's kdoc.
+            Log.w(
+                "MainActivity",
+                "hotkey irDevice=$irDevice irCommand=$irCommand targets an extender but has no raw Pronto " +
+                    "string (Inline-sourced IR devices can't target an extender yet)"
+            )
+            return
+        }
+        extenderRegistry.client(target.extenderId)?.let { client ->
+            lifecycleScope.launch { client.send(prontoCode) }
+        }
+    }
+
     private fun runHotkey(hk: HotkeyConfig): Boolean {
         if (hk.openOverlay != null) return openOverlayHotkey(hk.openOverlay)
         if (hk.openCurrentActivityRoom != null) return openCurrentActivityHotkey(hk.openCurrentActivityRoom)
@@ -708,13 +773,7 @@ class MainActivity : ComponentActivity() {
         val irDevice = hk.irDevice
         val irCommand = hk.irCommand
         if (irDevice != null && irCommand != null) {
-            val irStep = IrDatabaseRuntime.resolveFrom(dashboard.config.irDevices, irDevice, irCommand)
-            if (irStep != null) {
-                runCatching { irManager?.transmit(irStep.freq, irStep.pattern.toIntArray()) }
-                    .onFailure { Log.e("MainActivity", "hotkey IR send failed: $irDevice/$irCommand", it) }
-            } else {
-                Log.w("MainActivity", "hotkey irDevice=$irDevice irCommand=$irCommand not found in AppConfig.irDevices")
-            }
+            sendHotkeyIrCommand(irDevice, irCommand)
             return true
         }
 
