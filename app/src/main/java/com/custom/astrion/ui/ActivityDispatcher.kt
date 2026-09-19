@@ -18,6 +18,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/** The two [CoroutineScope]s [ActivityDispatcher] needs, bundled purely to
+ * keep its constructor under detekt's `LongParameterList` threshold — see
+ * that constructor's own doc comment on why they stay distinct internally
+ * rather than getting merged into one. */
+data class ActivityDispatcherScopes(
+    val scope: CoroutineScope,
+    val extenderScope: CoroutineScope
+)
+
 /**
  * "Send a command somewhere" and "switch/stop an Activity" — extracted out
  * of [Dashboard] itself, where this used to live as six nested functions
@@ -30,24 +39,47 @@ import kotlinx.coroutines.launch
  */
 class ActivityDispatcher(
     private val client: HaClient,
-    private val harmonyRegistry: HarmonyHubRegistry,
-    private val extenderRegistry: ExtenderRegistry,
+    /** [DashboardRegistries] — the same harmonyRegistry/extenderRegistry
+     * bundle [Dashboard] itself already builds, reused here purely to keep
+     * this constructor's own parameter count under detekt's
+     * `LongParameterList` threshold; unpacked into the two private vals
+     * below so nothing else in this class has to change. */
+    registries: DashboardRegistries,
     private val irManager: ConsumerIrManager?,
     private val irDevicesById: Map<String, IrDeviceConfig>,
     private val activitiesById: Map<String, ActivityConfig>,
     private val activityRuntime: ActivityRuntime,
+    /** Called with [ActivityConfig.page] right after [switchActivity] marks
+     * the Activity active — the single place "start this Activity" now
+     * navigates from, replacing a scene_grid tile's own redundant `"page"`
+     * field for this case (see [SceneGridCard]'s doc comment). Firing here,
+     * after `markActiveById`, rather than synchronously in the tile's own
+     * tap handler, is what actually matters: this is genuinely
+     * asynchronous (every device command in the plan has to go out first),
+     * so calling it any earlier would be racing work that hasn't happened
+     * yet. */
+    private val navigateToPage: (String) -> Unit,
+    /** [ActivityDispatcherScopes] — same reasoning as [registries]: purely
+     * a `LongParameterList`-driven bundle, not a behavior change. Kept as
+     * two distinct scopes internally exactly as before (see each private
+     * val's own doc, right below). */
+    scopes: ActivityDispatcherScopes
+) {
     /** Used by [startActivity]/[stopActivity] — matches the original
      * `scope.launch { switchActivity(activity) }`, the same CoroutineScope
      * [PageIndicator]'s dot-tap navigation and hardware-nav use elsewhere
      * in [Dashboard]. */
-    private val scope: CoroutineScope,
+    private val scope: CoroutineScope = scopes.scope
+
     /** Used only by extender-bound sends — matches the original, separate
      * `coroutineScope.launch { client.send(...) }`. Kept distinct from
      * [scope] rather than merged, since that's exactly how the two were
      * used before this got extracted — no reason to introduce a behavior
      * change alongside a code-motion refactor. */
-    private val extenderScope: CoroutineScope
-) {
+    private val extenderScope: CoroutineScope = scopes.extenderScope
+    private val harmonyRegistry: HarmonyHubRegistry = registries.harmonyRegistry
+    private val extenderRegistry: ExtenderRegistry = registries.extenderRegistry
+
     /** One dispatched action, in the order it should run. Built up-front
      * by [switchActivity]/[stopActivity] rather than fired immediately
      * device-by-device, specifically so [runSteps] can look at the whole
@@ -292,6 +324,7 @@ class ActivityDispatcher(
 
         runSteps(plan.steps)
         activityRuntime.markActiveById(activity.id)
+        activity.page?.let(navigateToPage)
     }
 
     fun startActivity(activityId: String) {
