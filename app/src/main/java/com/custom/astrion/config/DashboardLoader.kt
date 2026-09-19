@@ -122,7 +122,21 @@ object DashboardLoader {
                     val pageHotkeys = obj["hotkeys"]?.jsonArray?.map { parseHotkey(it.jsonObject) } ?: emptyList()
                     val pageLongHotkeys = obj["longHotkeys"]?.jsonArray?.map { parseHotkey(it.jsonObject) } ?: emptyList()
                     val parent = obj["parent"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-                    PageConfig(name, cards, pageHotkeys, pageLongHotkeys, parent)
+                    val parentKey = obj["parentKey"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: "BACK"
+                    val linkedPage = obj["linkedPage"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                    val hiddenUnlessActivity = obj["hiddenUnlessActivity"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                    val openWhenEntity = obj["openWhenEntity"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                    PageConfig(
+                        name = name,
+                        cards = cards,
+                        hotkeys = pageHotkeys,
+                        longHotkeys = pageLongHotkeys,
+                        parent = parent,
+                        parentKey = parentKey,
+                        linkedPage = linkedPage,
+                        hiddenUnlessActivity = hiddenUnlessActivity,
+                        openWhenEntity = openWhenEntity
+                    )
                 }
             if (pages.isEmpty()) error("\"pages\" is empty")
             val start = root["startPage"]?.jsonPrimitive?.intOrNull ?: 0
@@ -337,7 +351,13 @@ object DashboardLoader {
                     add(
                         buildJsonObject {
                             put("name", page.name)
-                            page.parent?.let { put("parent", it) }
+                            page.parent?.let {
+                                put("parent", it)
+                                put("parentKey", page.parentKey)
+                            }
+                            page.linkedPage?.let { put("linkedPage", it) }
+                            page.hiddenUnlessActivity?.let { put("hiddenUnlessActivity", it) }
+                            page.openWhenEntity?.let { put("openWhenEntity", it) }
                             put(
                                 "cards",
                                 buildJsonArray {

@@ -69,17 +69,45 @@ function refreshRemoteCommandDatalist() {
   dl.innerHTML = suggestions.map((c) => `<option value="${c}">`).join('');
 }
 
+// Selecting "Settings" or "Active Activities" here is a shortcut, not a
+// real page: addHotkey() below detects these two sentinel values and
+// writes an "openOverlay" hotkey instead of a "page" one — same end
+// result as picking the separate "Open overlay" action, just reachable
+// from the one dropdown someone's already looking at instead of having to
+// switch the Action selector for what's arguably the same kind of thing
+// ("go here"). Editing an existing hotkey never shows these two selected
+// (an openOverlay hotkey routes to the openOverlay action branch instead,
+// see editHotkey) — they're an input-only convenience.
+const HK_PAGE_OVERLAY_SHORTCUTS = [
+  { value: '__overlay_settings__', label: 'Settings', overlay: 'settings' },
+  { value: '__overlay_activities__', label: 'Active Activities', overlay: 'activities' }
+];
+
+function populateHkPageSelect() {
+  const select = document.getElementById('hkPage');
+  const pageOptions = (dashboardData.pages || [])
+    .map(p => `<option value="${p.name.replace(/"/g, '&quot;')}">${p.name}</option>`)
+    .join('');
+  const shortcutOptions = HK_PAGE_OVERLAY_SHORTCUTS
+    .map(s => `<option value="${s.value}">${s.label}</option>`)
+    .join('');
+  select.innerHTML =
+    `<optgroup label="Pages">${pageOptions}</optgroup>` +
+    `<optgroup label="Shortcuts">${shortcutOptions}</optgroup>`;
+}
+
 function updateHotkeyActionInputs() {
   const action = document.getElementById('hkAction').value;
   const container = document.getElementById('dynamicHotkeyInputs');
   if (action === 'page') {
-    container.innerHTML = `<label>Target page name</label><input type="text" id="hkPage" placeholder="e.g., Media">`;
+    container.innerHTML = `<label>Target page name</label><select id="hkPage"></select>`;
+    populateHkPageSelect();
   } else if (action === 'openOverlay') {
     container.innerHTML = `
       <label>Overlay</label>
       <select id="hkOverlay">
-        <option value="settings">Settings (same as swipe down from the top bar)</option>
-        <option value="activities">Active Activities (same as swipe up from the page dots)</option>
+        <option value="settings">Settings</option>
+        <option value="activities">Active Activities (same as swipe down from the top bar)</option>
       </select>
     `;
   } else if (action === 'openCurrentActivity') {
@@ -280,7 +308,13 @@ function addHotkey() {
 
   let hkObj = { key };
   if (action === 'page') {
-    hkObj.page = document.getElementById('hkPage').value.trim();
+    const selected = document.getElementById('hkPage').value.trim();
+    const shortcut = HK_PAGE_OVERLAY_SHORTCUTS.find(s => s.value === selected);
+    if (shortcut) {
+      hkObj.openOverlay = shortcut.overlay;
+    } else {
+      hkObj.page = selected;
+    }
   } else if (action === 'openOverlay') {
     hkObj.openOverlay = document.getElementById('hkOverlay').value;
   } else if (action === 'openCurrentActivity') {

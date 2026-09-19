@@ -303,6 +303,7 @@
         <div class="section-box">
             <label>Page name</label>
             <input type="text" id="pageDialogName" placeholder="e.g., Living Room, Apple TV...">
+            <label class="inline-check" style="margin-top:10px"><input type="checkbox" id="pageDialogStart"> Start page (shown on launch)</label>
             <label style="margin-top:10px">Parent page (optional)</label>
             <select id="pageDialogParent" onchange="onPageDialogParentChange()"></select>
             <div class="hint" style="margin-top:4px">Makes this a child page — navigate to it via a card's own "Page to open" (e.g. a scene_grid tile), and a physical button jumps back to the parent automatically.</div>
@@ -319,7 +320,20 @@
                 </select>
                 <div class="hint" style="margin-top:4px">Defaults to BACK. Pick a different button if BACK is already used for something else on this page, or if you'd rather reserve BACK entirely. If this page also binds its own hotkey on the chosen button, that hotkey wins and the parent-jump is skipped.</div>
             </div>
-            <label class="inline-check" style="margin-top:10px"><input type="checkbox" id="pageDialogStart"> Start page (shown on launch)</label>
+            <label style="margin-top:10px">Linked page (optional)</label>
+            <select id="pageDialogLinkedPage"></select>
+            <div class="hint" style="margin-top:4px">Swiping UP from this page's dots jumps straight to the linked page — handy for a "more options" page under a card (e.g. extra Apple TV controls). Several different pages can all link to the <em>same</em> shared page (e.g. a "TV Remote" page with HDMI/amp controls, linked from both "Apple TV" and "Xbox"): leave that shared page's own "Parent page" empty and it'll automatically return to whichever page you actually swiped up from, rather than always jumping back to one fixed page. Only set a "Parent page" on the linked page if it should always return to one specific place regardless of how you got there.</div>
+            <label style="margin-top:10px">Hide unless this Activity is running (optional)</label>
+            <select id="pageDialogHiddenUnlessActivity"></select>
+            <div class="hint" style="margin-top:4px">Leaves this page's dot out of the indicator until the chosen Activity is actually running, then shows it automatically — handy for decluttering a page tied to a device that isn't always in use. Lists both composed Activities (the "Activities" tab) and "track": true scene_grid tiles/hotkeys, Harmony ones included — same set ActivityRuntime tracks at runtime. Doesn't affect swiping to the page directly (a scene_grid tile's own "page" field, a hardware button, etc. — see the field's own note in AppConfig.kt for why), just its dot.</div>
+            <label style="margin-top:10px">Auto-open when this entity's state is (optional)</label>
+            <div style="display:flex; gap:8px;">
+                <input type="text" id="pageDialogOpenWhenEntity" placeholder="e.g., switch.doorbell" style="flex:2">
+                <input type="text" id="pageDialogOpenWhenState" placeholder="on" style="flex:1">
+            </div>
+            <label style="margin-top:10px">...and auto-close when its state is (optional)</label>
+            <input type="text" id="pageDialogCloseWhenState" placeholder="leave blank for &quot;anything else&quot;">
+            <div class="hint" style="margin-top:4px">Automatically jumps to this page the moment the entity's state matches the "open" one above (e.g. a doorbell switch turning on) — remembering wherever you were, so BACK/the chevron return there. Leave "close when" blank for the simple on/off case: closes on any state other than the open one. Set it explicitly for anything with more than two meaningful states — a cover's open/opening/closing/closed, a lock's locked/unlocked — so a transitional state doesn't force the page shut mid-way (e.g. open="open", close="closed" ignores "opening"/"closing" entirely). You can always close it yourself too, the same way as tapping "‹ back". For BACK on the remote itself to also close it, also set a "Parent page" above — the hardware BACK button only knows about that static field, not this dynamic close.</div>
             <div class="btn-row" style="margin-top:12px">
                 <button onclick="savePageDialog()">Save</button>
                 <button class="secondary" onclick="closePageDialog()">Cancel</button>

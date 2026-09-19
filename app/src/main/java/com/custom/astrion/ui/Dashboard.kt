@@ -152,10 +152,11 @@ data class DashboardActivityCallbacks(
     val onStopActivityReady: ((String) -> Unit) -> Unit = {}
 )
 
-/** Settings/Activities overlay visibility, reachable via swipe gestures
- * (handled by the caller — see [PageIndicator]'s onSwipeUpToActivities /
- * [TopStatusBar]'s onSwipeDownToSettings) or a hardware `openOverlay`
- * binding (`navTarget`/`overlayTarget` below). Bundled with its two
+/** Settings/Activities overlay visibility. Activities is reachable by
+ * swiping down from [TopStatusBar]; Settings by whichever hardware key the
+ * person assigns `openOverlay: "settings"` to in the Hotkeys tab, or a
+ * `navTarget`/`overlayTarget` push from elsewhere (e.g. ConfigServer).
+ * Bundled with its two
  * setters, rather than exposing raw `MutableState`, so the composable that
  * owns them ([rememberDashboardOverlayState]) stays the single place that
  * mutates them. */
@@ -290,6 +291,7 @@ private data class ActivityDispatcherInputs(
     val irDevicesById: Map<String, IrDeviceConfig>,
     val activitiesById: Map<String, ActivityConfig>,
     val activityRuntime: ActivityRuntime,
+    val navigateToPage: (String) -> Unit,
     val scope: CoroutineScope,
     val extenderScope: CoroutineScope
 )
@@ -303,14 +305,13 @@ private data class ActivityDispatcherInputs(
 private fun rememberActivityDispatcher(inputs: ActivityDispatcherInputs): ActivityDispatcher = remember(inputs) {
     ActivityDispatcher(
         client = inputs.client,
-        harmonyRegistry = inputs.harmonyRegistry,
-        extenderRegistry = inputs.extenderRegistry,
+        registries = DashboardRegistries(harmonyRegistry = inputs.harmonyRegistry, extenderRegistry = inputs.extenderRegistry),
         irManager = inputs.irManager,
         irDevicesById = inputs.irDevicesById,
         activitiesById = inputs.activitiesById,
         activityRuntime = inputs.activityRuntime,
-        scope = inputs.scope,
-        extenderScope = inputs.extenderScope
+        navigateToPage = inputs.navigateToPage,
+        scopes = ActivityDispatcherScopes(scope = inputs.scope, extenderScope = inputs.extenderScope)
     )
 }
 
@@ -392,8 +393,15 @@ private data class DashboardRuntimeState(
     val harmonyConnected: Boolean,
     val scope: CoroutineScope,
     val coroutineScope: CoroutineScope,
-    val pageCount: Int,
     val pagerState: PagerState,
+    /** id of every [ActivityConfig]/[TrackedActivity] currently active in
+     * *any* room (`ActivityRuntime.activeByRoom`'s non-null values, as a
+     * set) — used only to decide which [PageIndicator] dots to draw for a
+     * page with [PageConfig.hiddenUnlessActivity] set. Deliberately NOT
+     * used to filter the pager/pageCount itself; see that field's own doc
+     * comment on [PageConfig] for why gating real navigation on this would
+     * race a scene_grid tile's own "activity"+"page" combo tap. */
+    val activeActivityIds: Set<String>,
     /** Scans pages/hotkeys once per config load for every `"track": true`
      * item; re-scanned automatically whenever `config` itself changes
      * (dashboard.json reload). Bound to each hub's live state via
@@ -424,14 +432,20 @@ private fun rememberDashboardRuntimeState(config: AppConfig, harmonyRegistry: Ha
     val scope = rememberCoroutineScope()
     val coroutineScope = rememberCoroutineScope()
 
+    val activityRuntime = remember(config) { ActivityRuntime(config) }
+
+    // Only feeds PageIndicator's dot visibility (PageConfig.hiddenUnlessActivity)
+    // — the pager itself always covers every page in `config.pages`,
+    // unfiltered; see that field's doc comment for why.
+    val activeByRoom by activityRuntime.activeByRoom.collectAsState()
+    val activeActivityIds = remember(activeByRoom) { activeByRoom.values.filterNotNull().toSet() }
+
     val pageCount = config.pages.size.coerceAtLeast(1)
     val pagerState =
         rememberPagerState(
             initialPage = config.startPage.coerceIn(0, pageCount - 1),
             pageCount = { pageCount }
         )
-
-    val activityRuntime = remember(config) { ActivityRuntime(config) }
 
     val navigateToPage: (String) -> Unit = { pageName ->
         val idx = config.pages.indexOfFirst { it.name.equals(pageName, ignoreCase = true) }
@@ -452,8 +466,8 @@ private fun rememberDashboardRuntimeState(config: AppConfig, harmonyRegistry: Ha
         harmonyConnected = harmonyConnected,
         scope = scope,
         coroutineScope = coroutineScope,
-        pageCount = pageCount,
         pagerState = pagerState,
+        activeActivityIds = activeActivityIds,
         activityRuntime = activityRuntime,
         navigateToPage = navigateToPage,
         irManager = irManager,
@@ -521,8 +535,8 @@ fun Dashboard(
             val harmonyConnected = runtime.harmonyConnected
             val scope = runtime.scope
             val coroutineScope = runtime.coroutineScope
-            val pageCount = runtime.pageCount
             val pagerState = runtime.pagerState
+            val activeActivityIds = runtime.activeActivityIds
             val activityRuntime = runtime.activityRuntime
             val navigateToPage = runtime.navigateToPage
             val irManager = runtime.irManager
@@ -556,6 +570,7 @@ fun Dashboard(
                         irDevicesById = irDevicesById,
                         activitiesById = activitiesById,
                         activityRuntime = activityRuntime,
+                        navigateToPage = navigateToPage,
                         scope = scope,
                         extenderScope = coroutineScope
                     )
@@ -587,6 +602,20 @@ fun Dashboard(
                     )
                 )
 
+            // Shared with DashboardContent below (its swipe-up-to-linked-page
+            // handler also writes this) — lifted up here rather than kept
+            // local to DashboardContent because DashboardEntityPageEffect
+            // needs to read AND write it too, and it needs `entities`
+            // (only available at this level).
+            var linkedJump by remember { mutableStateOf<Pair<String, String>?>(null) }
+            DashboardEntityPageEffect(
+                pages = config.pages,
+                entities = entities,
+                pagerState = pagerState,
+                linkedJump = linkedJump,
+                onLinkedJumpChange = { linkedJump = it }
+            )
+
             val overlayState =
                 rememberDashboardOverlayState(
                     navTarget = navTarget,
@@ -594,7 +623,7 @@ fun Dashboard(
                     overlayTarget = overlayTarget,
                     onOverlayHandled = onOverlayHandled,
                     pagerState = pagerState,
-                    pageCount = pageCount
+                    pageCount = config.pages.size.coerceAtLeast(1)
                 )
 
             DashboardContent(
@@ -602,6 +631,7 @@ fun Dashboard(
                     config = config,
                     ctx = ctx,
                     pagerState = pagerState,
+                    activeActivityIds = activeActivityIds,
                     scope = scope,
                     connection = connection,
                     configNotice = configNotice,
@@ -610,7 +640,9 @@ fun Dashboard(
                     stopActivity = stopActivity,
                     onPageChanged = onPageChanged,
                     webhookContext = webhookContext,
-                    client = client
+                    client = client,
+                    linkedJump = linkedJump,
+                    onLinkedJumpChange = { linkedJump = it }
                 )
             )
         }
@@ -623,6 +655,7 @@ private data class DashboardContentInputs(
     val config: AppConfig,
     val ctx: CardContext,
     val pagerState: PagerState,
+    val activeActivityIds: Set<String>,
     val scope: CoroutineScope,
     val connection: ConnectionState,
     val configNotice: String?,
@@ -631,8 +664,105 @@ private data class DashboardContentInputs(
     val stopActivity: (String) -> Unit,
     val onPageChanged: (Int) -> Unit,
     val webhookContext: Context,
-    val client: HaClient
+    val client: HaClient,
+    /** Shared with [DashboardEntityPageEffect] — see [Dashboard]'s own
+     * `linkedJump` declaration for why it's lifted up rather than kept
+     * local to this composable. */
+    val linkedJump: Pair<String, String>?,
+    val onLinkedJumpChange: (Pair<String, String>?) -> Unit
 )
+
+/** The dynamic "‹ back" target for [PageIndicator]: a page's own static
+ * [PageConfig.parent] always wins when set, otherwise whichever page the
+ * most recent swipe-up (or [PageConfig.openWhenEntity] auto-open — see
+ * [DashboardEntityPageEffect]) into [current] actually came from ([Dashboard]'s
+ * own `linkedJump` state) — lets one shared linked page serve several
+ * different parents correctly. Pulled out of [DashboardContent] purely to
+ * keep that composable under detekt's `CyclomaticComplexity` threshold;
+ * not a behavior change. */
+private fun resolveBackTargetName(pages: List<PageConfig>, current: Int, linkedJump: Pair<String, String>?): String? {
+    val currentPageConfig = pages.getOrNull(current)
+    return currentPageConfig?.parent
+        ?: linkedJump?.let { (target, source) -> source.takeIf { currentPageConfig?.name == target } }
+}
+
+/** Case-insensitive index of the page named [name] in [pages], or null if
+ * unset/not found. Shared lookup behind [jumpToPageByName] and
+ * [DashboardEntityPageEffect]. */
+private fun pageIndexNamed(pages: List<PageConfig>, name: String?): Int? =
+    name?.let { n -> pages.indexOfFirst { it.name.equals(n, ignoreCase = true) } }?.takeIf { it >= 0 }
+
+/** Finds [name] in [pages] (case-insensitive) and jumps [pagerState] there,
+ * no-op if it isn't found — the shared "scroll to a page by name" used by
+ * [PageIndicator]'s chevron tap and swipe-up-to-linked-page. Pulled out of
+ * [DashboardContent] for the same `CyclomaticComplexity` reason as
+ * [resolveBackTargetName]. */
+private fun jumpToPageByName(pages: List<PageConfig>, name: String?, scope: CoroutineScope, pagerState: PagerState) {
+    val idx = pageIndexNamed(pages, name) ?: return
+    scope.launch { pagerState.scrollToPage(idx) }
+}
+
+/** Whether [state] should trigger auto-opening [page] — see
+ * [PageConfig.openWhenEntity]. */
+private fun entityPageOpens(page: PageConfig, state: String?): Boolean = state == page.openWhenState
+
+/** Whether [state] should trigger auto-closing [page] — [PageConfig.closeWhenState]
+ * if set, else any state other than [PageConfig.openWhenState] (the simple
+ * on/off default). See that field's own doc comment for why an explicit
+ * value matters for anything with more than two meaningful states. */
+private fun entityPageCloses(page: PageConfig, state: String?): Boolean =
+    page.closeWhenState?.let { state == it } ?: (state != page.openWhenState)
+
+/**
+ * Watches every page's [PageConfig.openWhenEntity] against live entity
+ * state and drives the pager accordingly — a switch turning "on" pops open
+ * its page, turning back off (or reaching [PageConfig.closeWhenState] when
+ * set) pops back to [resolveBackTargetName] (the same dynamic back-target
+ * [linkedJump] powers for [PageConfig.linkedPage], so a page reached this
+ * way closes the same way a linked one does: static [PageConfig.parent] if
+ * set, else wherever the pager was before this fired).
+ *
+ * `autoOpenedFor` exists so this only acts on the *transition* into
+ * [PageConfig.openWhenState], not on every recomposition while it holds:
+ * without it, manually swiping away from an auto-opened page while its
+ * entity is still matching would just get immediately reopened on the
+ * next entity update, fighting the person right back to the page they
+ * just left. It's cleared the moment [entityPageCloses] matches, so the
+ * next open-transition can fire again.
+ */
+@Composable
+private fun DashboardEntityPageEffect(
+    pages: List<PageConfig>,
+    entities: EntityMap,
+    pagerState: PagerState,
+    linkedJump: Pair<String, String>?,
+    onLinkedJumpChange: (Pair<String, String>?) -> Unit
+) {
+    var autoOpenedFor by remember { mutableStateOf<Set<String>>(emptySet()) }
+    LaunchedEffect(entities, pagerState.currentPage) {
+        val currentName = pages.getOrNull(pagerState.currentPage)?.name
+        pages.forEachIndexed { index, page ->
+            val entityId = page.openWhenEntity ?: return@forEachIndexed
+            val state = entities[entityId]?.state
+            val opens = entityPageOpens(page, state)
+            val closes = entityPageCloses(page, state)
+            val isCurrent = currentName == page.name
+            if (closes) autoOpenedFor = autoOpenedFor - entityId
+
+            when {
+                opens && !isCurrent && entityId !in autoOpenedFor -> {
+                    autoOpenedFor = autoOpenedFor + entityId
+                    onLinkedJumpChange(page.name to (currentName ?: page.name))
+                    pagerState.scrollToPage(index)
+                }
+                closes && isCurrent -> {
+                    val backTarget = resolveBackTargetName(pages, pagerState.currentPage, linkedJump)
+                    pageIndexNamed(pages, backTarget)?.let { pagerState.scrollToPage(it) }
+                }
+            }
+        }
+    }
+}
 
 /**
  * The page-change effect (tells MainActivity which page is visible now, so
@@ -646,7 +776,6 @@ private data class DashboardContentInputs(
  */
 @Composable
 private fun DashboardContent(inputs: DashboardContentInputs) {
-    val config = inputs.config
     val ctx = inputs.ctx
     val pagerState = inputs.pagerState
     val scope = inputs.scope
@@ -658,6 +787,10 @@ private fun DashboardContent(inputs: DashboardContentInputs) {
     val onPageChanged = inputs.onPageChanged
     val webhookContext = inputs.webhookContext
     val client = inputs.client
+    val config = inputs.config
+    val activeActivityIds = inputs.activeActivityIds
+    val linkedJump = inputs.linkedJump
+    val onLinkedJumpChange = inputs.onLinkedJumpChange
 
     LaunchedEffect(pagerState.currentPage) {
         onPageChanged(pagerState.currentPage)
@@ -682,7 +815,11 @@ private fun DashboardContent(inputs: DashboardContentInputs) {
                 .fillMaxSize()
                 .background(LocalTheme.current.background)
         ) {
-            TopStatusBar(onSwipeDownToSettings = { overlayState.onShowSettingsChange(true) })
+            // Swipe DOWN from the top bar now opens "Activities" (moved
+            // here from the bottom-indicator swipe-up below) — Settings is
+            // now just a regular assignable hotkey (openOverlay: "settings"),
+            // see the Hotkeys tab.
+            TopStatusBar(onSwipeDown = { overlayState.onShowActivitiesChange(true) })
             ConnectionBanner(connection)
             if (configNotice != null) ConfigNoticeBanner(configNotice)
 
@@ -696,22 +833,33 @@ private fun DashboardContent(inputs: DashboardContentInputs) {
                 PageContent(config.pages[pageIndex], ctx)
             }
 
+            val backTargetName = resolveBackTargetName(config.pages, pagerState.currentPage, linkedJump)
+
             PageIndicator(
                 pages = config.pages,
                 current = pagerState.currentPage,
+                activeActivityIds = activeActivityIds,
+                backTargetName = backTargetName,
                 // Same instant scrollToPage as navigateToPage/hardware nav —
                 // a dot tap is a direct jump too, not a swipe gesture, so it
                 // shouldn't visibly scroll through pages in between.
                 onDotClick = { index -> scope.launch { pagerState.scrollToPage(index) } },
-                onNavigateToParent = {
-                    val parentName = config.pages.getOrNull(pagerState.currentPage)?.parent
-                    val idx =
-                        parentName?.let { name ->
-                            config.pages.indexOfFirst { it.name.equals(name, ignoreCase = true) }
-                        }
-                    if (idx != null && idx >= 0) scope.launch { pagerState.scrollToPage(idx) }
-                },
-                onSwipeUpToActivities = { overlayState.onShowActivitiesChange(true) }
+                onNavigateToParent = { jumpToPageByName(config.pages, backTargetName, scope, pagerState) },
+                // Swipe UP now jumps to this page's own `linkedPage` (a
+                // per-card "more options" page, e.g. Apple TV's extra
+                // controls) instead of opening the Activities overlay —
+                // that moved to the top bar's swipe-down above. A page
+                // with no `linkedPage` set simply does nothing on swipe-up,
+                // same as a page with no `parent`/remembered source does
+                // nothing on BACK.
+                onSwipeUpToLinkedPage = {
+                    val current = config.pages.getOrNull(pagerState.currentPage)
+                    if (current != null) {
+                        val linkedName = current.linkedPage
+                        if (linkedName != null) onLinkedJumpChange(linkedName to current.name)
+                        jumpToPageByName(config.pages, linkedName, scope, pagerState)
+                    }
+                }
             )
         }
 
@@ -797,14 +945,16 @@ private fun SettingsOverlay(ctx: CardContext, onClose: () -> Unit) {
 
 /**
  * Full-screen overlay listing every currently-active AV Activity, grouped by
- * room — reached only by swiping UP from the bottom edge (see
- * [PageIndicator]'s onSwipeUpToActivities), the mirror-image gesture of
- * [SettingsOverlay]'s swipe-down-from-top. Dismissed by a downward swipe
- * from the top gesture strip (mirroring SettingsOverlay's bottom strip — see
- * its doc comment for why the gesture lives on its own node rather than on
- * the scrollable Column), the system back button, or the close row. Tapping
- * an Activity jumps to its page — the "CURRENT_ACTIVITY" one-tap-back
- * behaviour from the original design discussion.
+ * room — reached by swiping DOWN from the top edge (see [TopStatusBar]),
+ * the same discoverable spot Settings used to live on (Settings is now
+ * just a regular assignable hotkey — `openOverlay: "settings"` — see the
+ * Hotkeys tab).
+ * Dismissed by a downward swipe from the top gesture strip, the system back
+ * button, or the close row (see its doc comment on [SettingsOverlay]'s
+ * mirror-image bottom strip for why the gesture lives on its own node
+ * rather than on the scrollable Column). Tapping an Activity jumps to its
+ * page — the "CURRENT_ACTIVITY" one-tap-back behaviour from the original
+ * design discussion.
  */
 @Composable
 private fun ActivitiesOverlay(
@@ -828,9 +978,6 @@ private fun ActivitiesOverlay(
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Leaves room at the top for the gesture strip below so the
-            // first list item doesn't render underneath it.
-            Spacer(Modifier.height(42.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 Text(
                     "✕ " + stringResource(R.string.close),
@@ -904,18 +1051,20 @@ private fun ActivitiesOverlay(
                 }
             }
         }
-        // Top gesture strip: swipe down to close — mirror of SettingsOverlay's
-        // bottom strip, same reasoning (keeps the drag detector off the
-        // scrollable node so it doesn't lose the gesture to verticalScroll).
+        // Bottom gesture strip: swipe up to close — now mirrors
+        // SettingsOverlay's own strip exactly, since this overlay moved
+        // onto the same "swipe down from the top to open" gesture Settings
+        // used to use (see TopStatusBar's wiring in DashboardContent);
+        // closing pulls it back up the way it came in.
         Box(
             modifier =
             Modifier
-                .align(Alignment.TopCenter)
+                .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .height(50.dp)
                 .pointerInput(Unit) {
                     detectVerticalDragGestures { change, dragAmount ->
-                        if (dragAmount > 15f) onClose()
+                        if (dragAmount < -15f) onClose()
                     }
                 },
             contentAlignment = Alignment.Center
@@ -975,9 +1124,13 @@ private fun RenderCard(cardConfig: CardConfig, ctx: CardContext) {
 
 /**
  * Row of page dots + current page name at the bottom of the screen —
- * doubles as the swipe-UP trigger for the "Active Activities" overlay, the
- * bottom-edge mirror of [TopStatusBar]'s swipe-down-to-settings gesture.
- * Same accumulated-drag-past-a-threshold approach, just the opposite sign.
+ * doubles as the swipe-UP trigger for the current page's own
+ * [PageConfig.linkedPage] (e.g. an Apple TV card's "more options" page),
+ * the bottom-edge mirror of [TopStatusBar]'s swipe gesture (which now opens
+ * the Active Activities overlay instead of Settings — see
+ * [DashboardContent]'s TopStatusBar wiring). Same accumulated-drag-past-a-
+ * threshold approach, just the opposite sign. A page with no `linkedPage`
+ * simply does nothing on swipe-up.
  *
  * The dots represent the *current page's siblings* — every page sharing
  * the same [PageConfig.parent] (including root pages, which all share the
@@ -998,23 +1151,51 @@ private fun RenderCard(cardConfig: CardConfig, ctx: CardContext) {
  */
 private const val MAX_VISIBLE_DOTS = 5
 
+/** Whether [page] (found at [index] in the full page list) should get a dot
+ * in [PageIndicator] right now: always true for the page actually on
+ * screen, otherwise gated by [PageConfig.hiddenUnlessActivity] against
+ * [activeActivityIds] — see that field's own doc comment. Pulled out of
+ * [PageIndicator] itself purely to keep that composable under detekt's
+ * `CyclomaticComplexity` threshold; not a behavior change. */
+private fun isDotVisible(index: Int, page: PageConfig, current: Int, activeActivityIds: Set<String>): Boolean =
+    index == current || page.hiddenUnlessActivity == null || page.hiddenUnlessActivity in activeActivityIds
+
 @Composable
 private fun PageIndicator(
     pages: List<PageConfig>,
     current: Int,
     onDotClick: (Int) -> Unit,
     onNavigateToParent: () -> Unit,
-    onSwipeUpToActivities: () -> Unit
+    onSwipeUpToLinkedPage: () -> Unit,
+    /** ids of every [ActivityConfig] currently active anywhere — a page
+     * with [PageConfig.hiddenUnlessActivity] set gets no dot unless its id
+     * is in here. See that field's doc comment for why this is dots-only:
+     * the underlying [pages]/[current] indices are never filtered, so a
+     * dot being hidden never affects [onDotClick]/[onNavigateToParent]/
+     * [onSwipeUpToLinkedPage]'s own targets. */
+    activeActivityIds: Set<String>,
+    /** Name to show in the "‹ back" chevron, or null to hide it — the
+     * caller resolves this (config `parent`, falling back to wherever the
+     * most recent swipe-up came from; see its own computation for why),
+     * NOT necessarily `pages[current].parent` verbatim. */
+    backTargetName: String?
 ) {
     val density = LocalDensity.current
     val triggerPx = with(density) { 40.dp.toPx() }
     var dragAccumulated by remember { mutableFloatStateOf(0f) }
 
     val currentPage = pages.getOrNull(current)
-    val hasHierarchy = remember(pages) { pages.any { it.parent != null } }
+    // Broader than "does any page set a static parent": a page with no
+    // parent of its own can still show a dynamic backTargetName (see the
+    // caller) if it's ever reached as someone else's linkedPage, so the
+    // spacer reservation below has to account for that too, or dots would
+    // drift sideways the first time that dynamic chevron actually appears.
+    val hasHierarchy = remember(pages) { pages.any { it.parent != null || it.linkedPage != null } }
     val siblings =
-        remember(pages, currentPage?.parent) {
-            pages.withIndex().filter { (_, p) -> p.parent == currentPage?.parent }
+        remember(pages, currentPage?.parent, current, activeActivityIds) {
+            pages.withIndex().filter { (index, p) ->
+                p.parent == currentPage?.parent && isDotVisible(index, p, current, activeActivityIds)
+            }
         }
     val currentSiblingPos = siblings.indexOfFirst { it.index == current }.coerceAtLeast(0)
 
@@ -1043,7 +1224,7 @@ private fun PageIndicator(
                         change.consume()
                         dragAccumulated += dragAmount
                         if (dragAccumulated < -triggerPx) {
-                            onSwipeUpToActivities()
+                            onSwipeUpToLinkedPage()
                             dragAccumulated = 0f
                         }
                     }
@@ -1051,11 +1232,13 @@ private fun PageIndicator(
             },
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Left zone: only a child page shows this — jump to its parent.
-        // A fixed-width spacer on other pages keeps the dots visually
-        // centered instead of drifting sideways as you move between a
-        // child page and a root one within the same dashboard.
-        if (currentPage?.parent != null) {
+        // Left zone: only shown when there's somewhere to go back to
+        // (config `parent`, or wherever a swipe-up here came from — see
+        // backTargetName's own computation). A fixed-width spacer on other
+        // pages keeps the dots visually centered instead of drifting
+        // sideways as you move between a page with a back target and one
+        // without.
+        if (backTargetName != null) {
             Row(
                 modifier =
                 Modifier
@@ -1068,7 +1251,7 @@ private fun PageIndicator(
                 Text("‹", color = LocalTheme.current.accent, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.width(4.dp))
                 Text(
-                    currentPage.parent,
+                    backTargetName,
                     color = LocalTheme.current.accent,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,

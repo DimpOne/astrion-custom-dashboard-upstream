@@ -52,8 +52,18 @@ import com.custom.astrion.ui.tapClickable
  *   offline, no Harmony hub, Home Assistant, or cloud needed.
  * - "activity": starts a *composed* Activity (see AppConfig.ActivityConfig)
  *   — Astrion itself orchestrates every device involved, diffed against
- *   whatever was active in the same room before.
+ *   whatever was active in the same room before. Which page (if any) opens
+ *   once it's actually running comes from that Activity's own
+ *   ActivityConfig.page, fired by ActivityDispatcher right after it marks
+ *   the Activity active — not from this tile's own "page" (see below),
+ *   which this tile skips firing when "activity" is also set, precisely to
+ *   avoid the two racing (starting an Activity does real, non-instant work;
+ *   navigating here immediately, before any of it has happened, used to
+ *   jump the pager to a page that could still be `hiddenUnlessActivity`-
+ *   filtered out at that exact instant). Set the page once, on the
+ *   Activity itself, and every tile/hotkey that starts it shares it.
  * - "page": navigates to a specific dashboard page (ctx.navigateToPage).
+ *   Ignored on a tile that also sets "activity" — see above.
  * - "track"+"room": marks a tile with any of the single-action fields above
  *   as a trackable Activity — see ActivityRuntime. Not needed alongside
  *   "activity": a composed Activity is always implicitly tracked.
@@ -69,7 +79,7 @@ import com.custom.astrion.ui.tapClickable
  *       { "page": "Apple TV", "name": "Apple TV", "color": "#66009688",
  *         "icon": "/sdcard/astrion/icons/apple-tv_dark_icon.png" },
  *       { "entity_id": "scene.night", "name": "Night" },
- *       { "activity": "salon_appletv", "page": "Apple TV" }
+ *       { "activity": "salon_appletv", "name": "Watch Apple TV" }
  *     ]
  *   }
  * }
@@ -108,8 +118,16 @@ class SceneGridCard : CardRenderer {
             if (irDevice != null && irCommand != null) {
                 ctx.sendIrCommand(irDevice, irCommand)
             }
-            (scene["activity"] as? String)?.let(ctx.startActivity)
-            (scene["page"] as? String)?.let(ctx.navigateToPage)
+            val activityId = scene["activity"] as? String
+            if (activityId != null) {
+                // Deliberately not also firing scene["page"] here — see this
+                // card's own doc comment. ActivityConfig.page, via
+                // ActivityDispatcher, is what navigates once this Activity
+                // is actually confirmed active.
+                ctx.startActivity(activityId)
+            } else {
+                (scene["page"] as? String)?.let(ctx.navigateToPage)
+            }
             // If this tile is `"track": true`, records it as the active
             // Activity for its `"room"` — see ActivityRuntime. No-op for
             // ordinary (untracked) tiles, and for "activity" tiles (already

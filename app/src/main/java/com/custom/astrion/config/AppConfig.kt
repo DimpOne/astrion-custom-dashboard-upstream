@@ -70,7 +70,81 @@ data class PageConfig(
      * other than "BACK", the hardware BACK button itself goes back to doing
      * nothing on this page (today's behavior for a page with no parent at
      * all), since it's no longer the configured "leave" button. */
-    val parentKey: String = "BACK"
+    val parentKey: String = "BACK",
+    /** Optional name of another page in [AppConfig.pages] that this page
+     * links to "below" it — swiping UP on this page's [PageIndicator]
+     * jumps straight there (same instant `scrollToPage` as any other
+     * hardware/tap navigation), the vertical counterpart of [parent]'s
+     * horizontal relationship. Typically used for a per-card "more options"
+     * page (e.g. an Apple TV page's extra controls).
+     *
+     * Several different pages can all set this to the *same* linked page —
+     * a shared "TV Remote" page with HDMI/amp-source controls, say, linked
+     * from both an "Apple TV" page and an "Xbox" page. Leave [parent] unset
+     * on a page used this way: [PageIndicator] then falls back to
+     * whichever page the most recent swipe-up actually came from, rather
+     * than the single fixed page a static [parent] could only ever name
+     * one of — so the back chevron always returns to the right place
+     * regardless of which of the several linking pages you arrived from.
+     * (If the shared page DOES set [parent], that still wins outright —
+     * this fallback only fills in when it hasn't.)
+     *
+     * Case-insensitive; an unresolved name is simply ignored (swipe-up does
+     * nothing). null (default) = no linked page, and on a page with no
+     * [linkedPage] swiping up does nothing (see DashboardContent's
+     * PageIndicator wiring). */
+    val linkedPage: String? = null,
+    /** Optional Activity id — an [ActivityRuntime.TrackedActivity.id], which
+     * covers BOTH a composed [ActivityConfig.id] (same id space as a
+     * scene_grid item's `"activity"` field) AND any `"track": true`
+     * scene_grid tile or hotkey, Harmony-backed ones included (see
+     * [ActivityRuntime.scan] for exactly how each kind's id is derived) —
+     * NOT a room name. While set, this page's dot is left out of
+     * [PageIndicator] until [ActivityRuntime.activeByRoom] reports that
+     * specific Activity as the active one somewhere, then the dot appears
+     * (and disappears again once a different Activity — or none — takes
+     * over that room), decluttering the indicator for a page tied to a
+     * device that isn't always in use. null (default) = always shown,
+     * today's behavior.
+     *
+     * Deliberately dot-only, not a real filter on the pager itself
+     * (`AppConfig.pages`/`pagerState` always cover every page, regardless of
+     * this field) — a page tied to an Activity is exactly the page a
+     * scene_grid tile's own `"page"` field jumps to right after firing
+     * `"activity"` (see SceneGridCard's `onTap`), and that jump is a
+     * synchronous call while the Activity dispatch is still mid-flight
+     * (ActivityDispatcher.switchActivity only calls `markActiveById` — what
+     * actually updates `activeByRoom` — *after* every device command in the
+     * plan has been sent). Gating the pager itself on live Activity state
+     * made that combination silently fail to navigate the first version of
+     * this feature shipped with, since the target page wasn't "visible" yet
+     * at the moment of the jump; keeping the pager itself ungated sidesteps
+     * that whole race by construction. */
+    val hiddenUnlessActivity: String? = null,
+    /** Optional Home Assistant entity id to watch: when its state matches
+     * [openWhenState] (default `"on"`), automatically navigates to this
+     * page — e.g. a doorbell `switch` turning on pops open a "Doorbell"
+     * page — remembering wherever you were before via the same dynamic
+     * back-target [linkedPage] uses ([resolveBackTargetName] in
+     * Dashboard.kt), so BACK/the chevron return there.
+     *
+     * When the entity's state stops matching WHILE this page is the one on
+     * screen, automatically navigates back too — same target. Only fires
+     * once per "on" streak: leaving this page manually while the entity is
+     * still matching does not immediately re-open it (see
+     * `DashboardEntityPageEffect`'s own `autoOpenedFor` tracking) — it can
+     * trigger again on the next transition into [openWhenState].
+     *
+     * For BACK to close this page from a hardware button (not just an
+     * on-screen tap), set [parent] explicitly too: the hardware BACK key is
+     * wired in MainActivity against `AppConfig.pages` directly, and only
+     * knows about a page's static [parent] — it has no visibility into the
+     * dynamic, Compose-only back-target this field alone would leave you
+     * with. Leaving [parent] unset still gives on-screen closing (chevron
+     * tap) and the automatic close-on-state-change above. */
+    val openWhenEntity: String? = null,
+    val openWhenState: String = "on",
+    val closeWhenState: String? = null
 )
 
 /**
